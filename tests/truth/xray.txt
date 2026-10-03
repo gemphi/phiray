@@ -1,0 +1,13 @@
+# Blender 5.0.1 Workbench, X-ray (blender_xray.py): alpha spot r g b
+1.0 front 166 105 105
+1.0 both 161 97 97
+1.0 back 89 106 161
+1.0 world 63 63 63
+0.5 front 128 87 87
+0.5 both 126 95 118
+0.5 back 78 88 125
+0.5 world 63 63 63
+0.2 front 95 74 74
+0.2 both 99 80 94
+0.2 back 70 75 94
+0.2 world 63 63 63

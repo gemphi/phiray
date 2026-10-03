@@ -1,0 +1,1 @@
+Source: https://github.com/NVIDIA/warp @ 6098a5e5ad574096ead6d9c13527dc3f259e95fe (Apache-2.0), vendored subset, read-only reference — not compiled.

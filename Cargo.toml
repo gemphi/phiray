@@ -1,0 +1,19 @@
+[package]
+name = "phiray"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+description = "phiray — Phiber's own GPU renderer (next to Cycles). Entry: `Ray`."
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+pollster.workspace = true
+rayon.workspace = true
+wgpu.workspace = true
