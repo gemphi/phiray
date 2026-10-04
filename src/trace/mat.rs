@@ -3,7 +3,7 @@
 use super::kernel::Tri;
 use bytemuck::{Pod, Zeroable};
 
-/// Surface inputs shared by many faces (30 words on the GPU).
+/// Surface inputs shared by many faces (32 words on the GPU).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct Mat {
@@ -27,7 +27,17 @@ pub struct Mat {
     pub coat_rough: f32,
     pub aniso: f32,
     pub aniso_rot: f32,
+    /// A Mix Shader's other closure: the id of a second material, `NO_MAT`
+    /// for none, and the weight the second takes (`Tri::with_second`). The
+    /// path tracer shades one of the two per hit, chosen by the weight —
+    /// how Cycles samples a mix of closures — and Material Preview shades
+    /// both and lerps.
+    pub second: u32,
+    pub mix: f32,
 }
+
+/// `Mat::second` of a material with one lobe.
+pub const NO_MAT: u32 = u32::MAX;
 
 impl Mat {
     pub fn of(t: &Tri) -> Self {
@@ -37,13 +47,23 @@ impl Mat {
             sss: t.sss, sss_radius: t.sss_radius,
             sheen: t.sheen, sheen_rough: t.sheen_rough, sheen_tint: t.sheen_tint,
             coat: t.coat, coat_rough: t.coat_rough, aniso: t.aniso, aniso_rot: t.aniso_rot,
+            second: t.second, mix: t.mix,
         }
     }
-    pub(super) fn key(&self) -> [u32; 30] {
+    pub(super) fn key(&self) -> [u32; 32] {
         bytemuck::cast(*self)
     }
     pub(super) fn power(&self) -> f32 {
         0.2126 * self.emit[0] + 0.7152 * self.emit[1] + 0.0722 * self.emit[2]
+    }
+
+    /// The emitted power of this material with its second lobe, as the
+    /// mix shades it: the lobes' powers by their weights.
+    pub(super) fn power_in(&self, mats: &[Mat]) -> f32 {
+        match mats.get(self.second as usize) {
+            Some(other) if self.second != NO_MAT => self.power() * (1.0 - self.mix) + other.power() * self.mix,
+            _ => self.power(),
+        }
     }
 }
 

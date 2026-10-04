@@ -54,7 +54,7 @@ pub struct Scene {
     /// (`add`, `push`) has one, at the identity.
     pub insts: Vec<Instance>,
     verts: HashMap<[u32; 7], u32>,
-    mat_ids: HashMap<[u32; 30], u32>,
+    mat_ids: HashMap<[u32; 32], u32>,
 }
 
 impl Scene {
@@ -221,7 +221,7 @@ impl Scene {
 
     /// Largest single buffer in bytes.
     pub fn biggest(&self) -> u64 {
-        [self.pos.len() * 32, self.faces.len() * 16, self.atlas.words().len() * 4, self.mats.len() * 68 + 64]
+        [self.pos.len() * 32, self.faces.len() * 16, self.atlas.words().len() * 4, self.mats.len() * 128 + 64]
             .into_iter()
             .max()
             .unwrap_or(0) as u64
@@ -249,10 +249,10 @@ impl Scene {
             let cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
             0.5 * cr.iter().map(|v| v * v).sum::<f32>().sqrt()
         };
-        let glowing: Vec<bool> = mats.iter().map(|m| m.power() > 0.0).collect();
+        let power: Vec<f32> = mats.iter().map(|m| m.power_in(mats)).collect();
         let (ids, pw): (Vec<u32>, Vec<f32>) = (0..faces.len())
-            .filter(|&f| glowing[face_mat(faces[f][3]) as usize])
-            .map(|f| (f as u32, area(f) * mats[face_mat(faces[f][3]) as usize].power()))
+            .filter(|&f| power[face_mat(faces[f][3]) as usize] > 0.0)
+            .map(|f| (f as u32, area(f) * power[face_mat(faces[f][3]) as usize]))
             .filter(|(_, p)| *p > 0.0)
             .unzip();
         let total: f32 = pw.iter().sum();

@@ -177,10 +177,10 @@ fn split_buffers_render_the_same() {
     // … while four bindings (when the device has them) still fit, down to a quarter.
     if Tracer::chunks_for(&gpu) == 4 {
         assert_eq!(whole, render(1 << 20, 4));
-        // 380 bytes: the data table — the two materials (30 words each), the
+        // 396 bytes: the data table — the two materials (32 words each), the
         // empty atlas's word and the one instance's record (33 words) — is
         // the tightest binding.
-        assert_eq!(whole, render(380, 4));
-        assert!(refused(376, 4), "the data table does not fit");
+        assert_eq!(whole, render(396, 4));
+        assert!(refused(392, 4), "the data table does not fit");
     }
 }

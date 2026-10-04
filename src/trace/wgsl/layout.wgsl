@@ -17,6 +17,8 @@ struct Tri {
     coat: f32, coat_rough: f32,
     // Anisotropy and rotation (carried; not yet shaded).
     aniso: f32, aniso_rot: f32,
+    // A second lobe: another material's id (NO_MAT = none) and its weight.
+    second: u32, mix: f32,
 }
 struct Hit { t: f32, tri: u32, u: f32, v: f32 }
 
@@ -27,7 +29,8 @@ const INST: u32 = 0x40000000u;
 // Words per instance record (`Instance::words`).
 const INST_WORDS: u32 = 32u;
 // Words per material record (`Mat`).
-const MAT_WORDS: u32 = 30u;
+const MAT_WORDS: u32 = 32u;
+const NO_MAT: u32 = 0xffffffffu;
 const NO_TEX: u32 = 0xffffffffu;
 const INF: f32 = 3.0e38;
 
@@ -40,7 +43,12 @@ fn tf(i: u32) -> f32 { return bitcast<f32>(data[i]); }
 
 // First word of face `f`'s material (the low half of its fourth word; the
 // high half names its instance).
-fn mat_at(f: u32) -> u32 { return 1u + 2u * data[0] + MAT_WORDS * (face(f).w & 0xffffu); }
+fn mat_at(f: u32) -> u32 { return mat_word(face(f).w & 0xffffu); }
+// First word of material `id`.
+fn mat_word(id: u32) -> u32 { return 1u + 2u * data[0] + MAT_WORDS * id; }
+// A material's second lobe (`Mat::second`, `NO_MAT` for none) and its weight.
+fn mat_second(m: u32) -> u32 { return data[m + 30u]; }
+fn mat_mix(m: u32) -> f32 { return tf(m + 31u); }
 
 // Instance `i`'s record: world rows 0..12, inverse rows 12..24, 24 the root
 // of its tree, 25..27 its faces, 27 its flags: bit 0 set when it sits at
@@ -69,10 +77,14 @@ fn unoct(e: vec2<f32>) -> vec3<f32> {
 }
 
 // Assemble face `f` as a full triangle record, placed in the world by its
-// instance (its vertices are kept in the object's space).
-fn tri_at(f: u32) -> Tri {
+// instance (its vertices are kept in the object's space), with its own
+// material.
+fn tri_at(f: u32) -> Tri { return tri_with(f, mat_at(f)); }
+
+// Face `f` with the material whose first word is `m` — its own, or the
+// second lobe of its own.
+fn tri_with(f: u32, m: u32) -> Tri {
     let v = face(f);
-    let m = mat_at(f);
     let x = vert(v.x);
     let y = vert(v.y);
     let z = vert(v.z);
@@ -113,6 +125,7 @@ fn tri_at(f: u32) -> Tri {
         tf(m + 21u), tf(m + 22u), vec3<f32>(tf(m + 23u), tf(m + 24u), tf(m + 25u)),
         tf(m + 26u), tf(m + 27u),
         tf(m + 28u), tf(m + 29u),
+        data[m + 30u], tf(m + 31u),
     );
 }
 

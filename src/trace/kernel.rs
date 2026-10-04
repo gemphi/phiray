@@ -53,15 +53,19 @@ pub struct Tri {
     /// (per-triangle tangents are needed first).
     pub aniso: f32,
     pub aniso_rot: f32,
-    pub _m: u32,
+    /// A second lobe (`Mat::second`, `mix`): the id of another material
+    /// in the scene and the weight it takes; `NO_MAT`, 0 for one lobe.
+    pub second: u32,
+    pub mix: f32,
 }
 
 /// `Tri::tex` value for untextured triangles.
 pub const NO_TEX: u32 = u32::MAX;
+pub use super::mat::NO_MAT;
 
 impl Tri {
     pub fn new(p: [[f32; 3]; 3], n: [[f32; 3]; 3], color: [f32; 4]) -> Self {
-        Self { a: p[0], b: p[1], c: p[2], na: n[0], nb: n[1], nc: n[2], color, rough: 0.5, ior: 1.5, tex: NO_TEX, nmap: NO_TEX, maps: [NO_TEX; 3], sheen_rough: 0.5, sheen_tint: [1.0; 3], coat_rough: 0.03, sss_radius: [0.05, 0.01, 0.005], ..Default::default() }
+        Self { a: p[0], b: p[1], c: p[2], na: n[0], nb: n[1], nc: n[2], color, rough: 0.5, ior: 1.5, tex: NO_TEX, nmap: NO_TEX, maps: [NO_TEX; 3], sheen_rough: 0.5, sheen_tint: [1.0; 3], coat_rough: 0.03, sss_radius: [0.05, 0.01, 0.005], second: NO_MAT, ..Default::default() }
     }
 
     /// Texture `tex` (from [`Atlas::add`]) mapped by corner UVs; it multiplies `color`.
@@ -126,6 +130,13 @@ impl Tri {
     /// Anisotropy and its rotation (carried for parity; not yet shaded).
     pub fn with_anisotropy(mut self, amount: f32, rotation: f32) -> Self {
         (self.aniso, self.aniso_rot) = (amount.clamp(-1.0, 1.0), rotation);
+        self
+    }
+
+    /// A Mix Shader's other closure: material `second` (`Scene::material`)
+    /// at weight `mix` (0 all this, 1 all the other), the UVs shared.
+    pub fn with_second(mut self, second: u32, mix: f32) -> Self {
+        (self.second, self.mix) = (second, mix.clamp(0.0, 1.0));
         self
     }
 

@@ -128,9 +128,24 @@ fn preview_lamps(s: Surf) -> vec3<f32> {
 // takes (its alpha), and what continues past it.
 struct Layer { rgb: vec3<f32>, alpha: f32, thr: vec3<f32>, o: vec3<f32>, d: vec3<f32>, through: bool }
 
-// Shade the surface `h` met along `d` from `o`, `t` into the ray.
+// Shade the surface `h` met along `d` from `o`, `t` into the ray: its
+// material's one lobe, or a Mix Shader's two lerped by the weight — what
+// EEVEE's evaluation of the mix comes to, deterministic as this kernel is.
+// The continued ray is the heavier lobe's.
 fn preview_surface(h: Hit, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, first: bool) -> Layer {
-    let t = tri_at(h.tri);
+    let m = mat_at(h.tri);
+    let other = mat_second(m);
+    let a = preview_lobe(h, m, o, d, foot, i, first);
+    if (other == NO_MAT) { return a; }
+    let w = mat_mix(m);
+    let b = preview_lobe(h, mat_word(other), o, d, foot, i, false);
+    let heavy = w > 0.5;
+    return Layer(mix(a.rgb, b.rgb, w), mix(a.alpha, b.alpha, w), mix(a.thr, b.thr, w), select(a.o, b.o, heavy), select(a.d, b.d, heavy), a.through || b.through);
+}
+
+// One lobe: the surface `h` with the material whose first word is `m`.
+fn preview_lobe(h: Hit, m: u32, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, first: bool) -> Layer {
+    let t = tri_with(h.tri, m);
     let w = 1.0 - h.u - h.v;
     let bary = vec3<f32>(w, h.u, h.v);
     let ng0 = normalize(cross(t.b - t.a, t.c - t.a));

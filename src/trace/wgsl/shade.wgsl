@@ -113,7 +113,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             break;
         }
         if (bounce == 0u) { first_t = h.t; }
-        let t = tri_at(h.tri);
+        // A Mix Shader's two closures: one of them per hit, by the weight
+        // (`svm_node_mix_closure` weights the closures and the sampler picks
+        // one by weight, which is unbiased); the other hits of the pixel's
+        // samples take the other.
+        var m = mat_at(h.tri);
+        let other = mat_second(m);
+        if (other != NO_MAT && rnd(&seed) < mat_mix(m)) { m = mat_word(other); }
+        let t = tri_with(h.tri, m);
         let w = 1.0 - h.u - h.v;
         let ng0 = normalize(cross(t.b - t.a, t.c - t.a));
         let front = dot(ng0, d) < 0.0;
