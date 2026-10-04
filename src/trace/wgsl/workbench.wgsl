@@ -62,9 +62,14 @@ fn workbench(base: vec3<f32>, rough: f32, metal: f32, n_in: vec3<f32>, i: vec3<f
     let n = normalize(n_in);
 
     // Metals have no diffuse and tint their highlight; dielectrics keep their
-    // colour and reflect a dim neutral one.
-    let diffuse_color = base * (1.0 - metal);
+    // colour and reflect a dim neutral one. Specular Lighting off
+    // (`use_specular`): the colour alone, diffuse, no highlight.
+    var diffuse_color = base * (1.0 - metal);
     var specular_color = vec3<f32>(0.05) + (base - vec3<f32>(0.05)) * metal;
+    if (p.shade.w != 0u) {
+        diffuse_color = base;
+        specular_color = vec3<f32>(0.0);
+    }
 
     let r = 2.0 * dot(n, i) * n - i;
     var diffuse_light = vec3<f32>(0.0);

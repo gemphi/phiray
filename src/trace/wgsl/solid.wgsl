@@ -31,18 +31,27 @@ fn solid_at(h: Hit, d: vec3<f32>, facing: bool) -> Shaded {
     var rough = t.rough;
     var metal = t.metal;
     let uv = vec2<f32>(dot(t.us, bary), dot(t.vs, bary));
-    if (t.tex != NO_TEX) { base *= sample_tex(t.tex, uv).rgb; }
+    // Color ▸ Texture (`workbench_image_lib.glsl`): the image is the colour;
+    // Solid's build uploads one in that mode alone.
+    if (t.tex != NO_TEX) { base = sample_tex(t.tex, uv).rgb; }
     if (t.maps.x != NO_TEX) { rough *= sample_raw(t.maps.x, uv).r; }
     if (t.maps.y != NO_TEX) { metal *= sample_raw(t.maps.y, uv).r; }
-    // Color ▸ Object / Random / Single (`workbench_engine.cc`'s
-    // `get_material`): the object's colour, a hue hashed from its name, or
-    // the one colour — each with `pack_data(0.0, 0.4, …)`: no metal,
-    // roughness 0.4.
-    if (p.shade.y == 4u || p.shade.y == 1u || p.shade.y == 2u) {
-        let w = inst_at(face(h.tri).w >> 16u);
-        if (p.shade.y == 4u) { base = vec3<f32>(tf(w + 28u), tf(w + 29u), tf(w + 30u)); }
-        else if (p.shade.y == 1u) { base = random_color(data[w + 31u]); }
-        else { base = p.single.rgb; }
+    // Color ▸ Object / Random / Single / Attribute (`workbench_engine.cc`'s
+    // `get_material`): the object's colour, a hue hashed from its name, the
+    // one colour, or the vertex colour — each with `pack_data(0.0, 0.4, …)`:
+    // no metal, roughness 0.4. Attribute over a mesh without one is
+    // Material, as `SceneState::has_color` falls back.
+    let painted = p.shade.y == 5u && p.insts.z != 0u;
+    if (p.shade.y == 4u || p.shade.y == 1u || p.shade.y == 2u || painted) {
+        let iw = inst_at(face(h.tri).w >> 16u);
+        if (p.shade.y == 4u) { base = vec3<f32>(tf(iw + 28u), tf(iw + 29u), tf(iw + 30u)); }
+        else if (p.shade.y == 1u) { base = random_color(data[iw + 31u]); }
+        else if (p.shade.y == 2u) { base = p.single.rgb; }
+        else {
+            // The corners' sRGB bytes, linear, over the barycentrics.
+            let v = face(h.tri);
+            base = vertex_color(v.x) * w + vertex_color(v.y) * h.u + vertex_color(v.z) * h.v;
+        }
         rough = 0.4;
         metal = 0.0;
     }
@@ -57,7 +66,30 @@ fn solid_at(h: Hit, d: vec3<f32>, facing: bool) -> Shaded {
     let wb_metal = round(clamp(metal, 0.0, 1.0) * 255.0) / 255.0;
     // Lighting ▸ Flat (`WORKBENCH_LIGHTING_FLAT`): the colour itself.
     if (p.shade.x == 2u) { return Shaded(base, nv); }
+    // Lighting ▸ MatCap (`get_matcap_lighting`): the matcap's diffuse image
+    // by the view normal times the colour, its specular image added when
+    // Specular Lighting is on.
+    if (p.shade.x == 1u && p.matcap.x != 0u) {
+        let uv = matcap_uv(iv, nv, p.matcap.z != 0u);
+        var lit = sample_env(p.matcap.x - 1u, uv) * base;
+        if (p.matcap.y != 0u && p.shade.w == 0u) { lit += sample_env(p.matcap.y - 1u, uv); }
+        return Shaded(lit, nv);
+    }
     return Shaded(workbench(base, wb_rough, wb_metal, nv, iv) + emit_at(t, bary), nv);
+}
+
+// `matcap_uv_compute` (`workbench_matcap_lib.glsl`): the view normal in a
+// basis made from the incident vector, to the image's `0.004 ..= 0.996`;
+// the image's rows run top-down here where GL's run up, so y is turned.
+fn matcap_uv(i: vec3<f32>, n: vec3<f32>, flipped: bool) -> vec2<f32> {
+    let a = 1.0 / (1.0 + i.z);
+    let b = -i.x * i.y * a;
+    let b1 = vec3<f32>(1.0 - i.x * i.x * a, b, -i.x);
+    let b2 = vec3<f32>(b, 1.0 - i.y * i.y * a, -i.y);
+    var uv = vec2<f32>(dot(b1, n), dot(b2, n));
+    if (flipped) { uv.x = -uv.x; }
+    uv = uv * 0.496 + 0.5;
+    return vec2<f32>(uv.x, 1.0 - uv.y);
 }
 
 // Workbench's Shadow (`get_shadow`, `workbench_world_light_lib.glsl`) for
@@ -79,6 +111,11 @@ fn shadow_factor(o: vec3<f32>, d: vec3<f32>, h: Hit, nv: vec3<f32>) -> f32 {
         if (trace(org, -dir, INF, true).tri != 0xffffffffu) { mix = 0.0; }
     }
     return mix * p.shadow.w + (1.0 - p.shadow.w);
+}
+
+// Vertex `v`'s colour attribute (`Scene::paint`'s sRGB bytes), scene-linear.
+fn vertex_color(v: u32) -> vec3<f32> {
+    return srgb_to_linear(unpack4x8unorm(data[p.insts.z + v]).rgb);
 }
 
 // `BLI_hash_int_01(hash)` as a hue at saturation 0.5 and value 0.8
@@ -223,7 +260,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         taa_sample(i, xray_grid(o, d, seen.near, pix, srgb(seen.col)));
         return;
     }
-    let h = primary(o, d, i);
+    var h = primary(o, d, i);
+    // Backface Culling (`DRW_STATE_CULL_BACK`): a face turned away is not
+    // drawn, so the ray goes on past it to what is behind.
+    for (var k = 0u; k < XRAY_LAYERS && p.shade.z != 0u && h.tri != 0xffffffffu; k++) {
+        let t = tri_at(h.tri);
+        if (dot(cross(t.b - t.a, t.c - t.a), d) < 0.0) { break; }
+        let ahead = h.t + max(h.t, 1.0) * 1e-5;
+        let next = trace(o + d * ahead, d, INF, false);
+        h = Hit(ahead + next.t, next.tri, next.u, next.v);
+    }
     if (h.tri == 0xffffffffu) {
         let g = grid_over(o, d, INF, pix);
         fx_store(i, srgb_to_linear(sky), g, 0u, vec3<f32>(0.0), 0.0);

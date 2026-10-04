@@ -3,6 +3,7 @@
 
 pub mod blue_noise;
 pub mod hash;
+pub mod srgb;
 pub mod ibl;
 pub mod instance;
 mod kernel;
@@ -20,6 +21,7 @@ pub use lamps::Lamps;
 pub use shader::{Fx, Preview, Preview4, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
 pub use instance::Instance;
 pub use mat::Mat;
+pub use srgb::Srgb;
 pub use scene::Scene;
 
 use crate::bvh::{Aabb, Node};
@@ -138,6 +140,12 @@ impl Tracer {
         data.extend(scene.atlas.words());
         let insts_at = data.len() as u32;
         data.extend(trees.inst_words(&scene.insts));
+        // The vertices' colour attribute, when any object has one (`Scene::paint`).
+        let colors_at = if scene.colors.is_empty() { 0 } else { data.len() as u32 };
+        if colors_at != 0 {
+            data.extend(&scene.colors);
+            data.resize(colors_at as usize + scene.pos.len(), 0xffff_ffff);
+        }
         if data.len() as u64 * 4 > limit {
             return None;
         }
@@ -164,7 +172,7 @@ impl Tracer {
             px: None,
             vis: None,
             blank: GpuArray::zeroed(gpu, 4),
-            noise: GpuArray::from(gpu, &blue_noise::words()),
+            noise: GpuArray::from(gpu, &blue_noise::BlueNoise::words()),
             // Hardware rasterizes its primary hits (Workbench's prepass); a
             // software adapter traces them, where walking the tree is the
             // cheaper of the two (`visible.rs`).
@@ -172,7 +180,7 @@ impl Tracer {
             n_faces,
             bounds,
             split: [n_at, f_at, v_at, atlas_at],
-            insts: [insts_at, pose.insts.len() as u32, 0, 0],
+            insts: [insts_at, pose.insts.len() as u32, colors_at, 0],
             last: None,
             frame: 0,
             pass: Pass::default(),

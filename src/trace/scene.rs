@@ -41,6 +41,10 @@ pub struct Scene {
     pub pos: Vec<[f32; 4]>,
     /// Octahedral normal (xy) + UV (zw). A zero normal packs to (0, 0) → flat.
     pub attr: Vec<[f32; 4]>,
+    /// Each vertex's colour attribute, sRGB bytes packed `r | g << 8 | b <<
+    /// 16 | a << 24` (`paint`); empty when no object has one — Solid's
+    /// Color ▸ Attribute.
+    pub colors: Vec<u32>,
     /// Vertex ids + `material | instance << 16` (`face_mat`, `face_inst`).
     pub faces: Vec<[u32; 4]>,
     pub mats: Vec<Mat>,
@@ -69,19 +73,28 @@ impl Scene {
     /// id. Past `MAX_INSTANCES` the last instance keeps taking faces — a
     /// scene of sixty-five thousand objects places the rest together.
     pub fn instance(&mut self, world: [[f32; 4]; 4]) -> u32 {
-        self.instance_of(world, [1.0; 3], 0)
+        self.instance_of(world, [1.0; 3], super::hash::ObjectHash(0))
     }
 
     /// [`Self::instance`] with the object's own colour (`Object.col`,
-    /// linear) and the hash of its id name (`hash::object_hash`), for
-    /// Solid's Color ▸ Object and ▸ Random.
-    pub fn instance_of(&mut self, world: [[f32; 4]; 4], color: [f32; 3], hash: u32) -> u32 {
+    /// linear) and the hash of its id name (`ObjectHash::of`), for Solid's
+    /// Color ▸ Object and ▸ Random.
+    pub fn instance_of(&mut self, world: [[f32; 4]; 4], color: [f32; 3], hash: super::hash::ObjectHash) -> u32 {
         self.close_instance();
         if self.insts.len() >= MAX_INSTANCES {
             return self.insts.len() as u32 - 1;
         }
-        self.insts.push(Instance::at(world, self.faces.len() as u32, self.pos.len() as u32).colored(color, hash));
+        self.insts.push(Instance::at(world, self.faces.len() as u32, self.pos.len() as u32).colored(color, hash.0));
         self.insts.len() as u32 - 1
+    }
+
+    /// Instance `inst` casts no shadow: Workbench's Viewport Display ▸
+    /// Shadow off (`OB_DRAW_NO_SHADOW_CAST`), or Cycles' Ray Visibility ▸
+    /// Shadow off (`OB_HIDE_SHADOW`) — the shadow rays pass it by.
+    pub fn hide_shadow(&mut self, inst: u32) {
+        if let Some(i) = self.insts.get_mut(inst as usize) {
+            i.casts_shadow = false;
+        }
     }
 
     /// The instance faces are being added to, the identity one when none
@@ -139,6 +152,18 @@ impl Scene {
         self.pos.push([p[0], p[1], p[2], 1.0]);
         self.attr.push([o[0], o[1], uv[0], uv[1]]);
         self.pos.len() as u32 - 1
+    }
+
+    /// Give vertex `v` its colour attribute, scene-linear `rgb` — kept as
+    /// sRGB bytes, Blender's byte colour; vertices never painted are white.
+    pub fn paint(&mut self, v: u32, rgb: [f32; 3]) {
+        if self.colors.len() < self.pos.len() {
+            self.colors.resize(self.pos.len(), 0xffff_ffff);
+        }
+        let byte = |c: f32| u32::from(super::srgb::Srgb::linear_to_byte(c));
+        if let Some(slot) = self.colors.get_mut(v as usize) {
+            *slot = byte(rgb[0]) | byte(rgb[1]) << 8 | byte(rgb[2]) << 16 | 0xff << 24;
+        }
     }
 
     /// Shared id of a material.

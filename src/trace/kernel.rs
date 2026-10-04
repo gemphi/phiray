@@ -246,8 +246,10 @@ pub struct Camera {
     /// waiting out a whole frame.
     pub slice: [u32; 4],
     /// The instance table in `data` (set by the tracer): `[first word,
-    /// count, _, _]` — each instance's placement and the root of its tree
-    /// (`Instance::words`), then the top tree's slot order (`Trees`).
+    /// count, first word of the vertices' colour attribute — 0 when no
+    /// object has one (`Scene::paint`), _]` — each instance's placement
+    /// and the root of its tree (`Instance::words`), then the top tree's
+    /// slot order (`Trees`).
     pub insts: [u32; 4],
     /// The visibility prepass (set by the tracer): `[drawn, pixels a row
     /// of its hits spans, orthographic depth reach bits, perspective near
@@ -268,10 +270,15 @@ pub struct Camera {
     /// Solid's Lighting and Color (`View3DShading.light`, `color_type`):
     /// `[light: 0 Studio, 1 MatCap (drawn as Studio), 2 Flat; color: 0
     /// Material, 1 Random, 2 Single, 3 Texture (as Material), 4 Object, 5
-    /// Attribute (as Material); _, _]`. The colour word is
+    /// Attribute (the vertex colour, Material where a mesh has none);
+    /// backface culling on
+    /// (`V3D_SHADING_BACKFACE_CULLING`: back faces are traced through);
+    /// specular lighting OFF (`V3D_SHADING_SPECULAR_HIGHLIGHT` clear:
+    /// `get_world_lighting` without its highlight)]`. The colour word is
     /// `eV3DShadingColorType`'s numbering; the light word puts Studio at 0
-    /// (Blender's `eV3DShadingLightingMode` has Flat there) so a zeroed
-    /// camera draws as before.
+    /// (Blender's `eV3DShadingLightingMode` has Flat there) and the last
+    /// two are the flags inverted where Blender's default sets them, so a
+    /// zeroed camera draws as before.
     pub shade: [u32; 4],
     /// Color ▸ Single's colour (`single_color`), scene-linear.
     pub single: [f32; 4],
@@ -295,6 +302,11 @@ pub struct Camera {
     /// `get_shadow`'s `smoothstep` over `−N · direction` — `focus'` is
     /// `1 − clamp(focus) (1 − shift)`, kept above `shift`.
     pub shadow_fade: [f32; 4],
+    /// MatCap lighting's images in the atlas (`get_matcap_lighting`):
+    /// `[diffuse id + 1, specular id + 1 — 0 for none, flipped
+    /// (`V3D_SHADING_MATCAP_FLIP_X`), _]`; a 0 diffuse word under MatCap
+    /// lights as Studio.
+    pub matcap: [u32; 4],
     pub lights: [Light; LIGHTS],
 }
 

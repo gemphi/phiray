@@ -6,7 +6,7 @@
 //! of the normals (`curvature_compute`), never across an object's edge.
 //! With both off the frame is the frame of before, pixel for pixel.
 
-use phiray::{Atlas, Camera, Mat, Mode, Ray, Scene, Tracer, Tri};
+use phiray::{Camera, Mat, Mode, Ray, Scene, Tracer, Tri};
 
 const W: u32 = 64;
 

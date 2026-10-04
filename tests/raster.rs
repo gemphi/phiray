@@ -3,7 +3,7 @@
 //! what tracing every pixel's ray drew: the same hit, the same shading,
 //! under an orthographic and a perspective view, over placed instances.
 
-use phiray::{Atlas, Camera, Mat, Mode, Ray, Scene, Tracer, Tri};
+use phiray::{Camera, Mat, Mode, Ray, Scene, Tracer, Tri};
 
 const W: u32 = 72;
 

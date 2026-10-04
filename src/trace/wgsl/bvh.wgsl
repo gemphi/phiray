@@ -38,9 +38,11 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
     let w = inst_at(i);
     let root = data[w + 24u];
     if (root == 0xffffffffu) { return; }
+    // A shadow ray (any hit) passes an instance that casts none (word 27, bit 1).
+    if (first && (data[w + 27u] & 2u) != 0u) { return; }
     var o = ow;
     var d = dw;
-    if (data[w + 27u] == 0u) {
+    if ((data[w + 27u] & 1u) == 0u) {
         let i0 = inst_row(w + 12u);
         let i1 = inst_row(w + 16u);
         let i2 = inst_row(w + 20u);

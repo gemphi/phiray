@@ -22,7 +22,7 @@ fn corner_at(f: u32, k: u32) -> vec3<f32> {
     let id = select(select(v.x, v.y, k == 1u), v.z, k == 2u);
     let ph = vert(id).p;
     let w = inst_at(v.w >> 16u);
-    if (data[w + 27u] != 0u) { return ph.xyz; }
+    if ((data[w + 27u] & 1u) != 0u) { return ph.xyz; }
     return vec3<f32>(dot(inst_row(w), ph), dot(inst_row(w + 4u), ph), dot(inst_row(w + 8u), ph));
 }
 

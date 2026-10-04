@@ -43,7 +43,8 @@ fn tf(i: u32) -> f32 { return bitcast<f32>(data[i]); }
 fn mat_at(f: u32) -> u32 { return 1u + 2u * data[0] + MAT_WORDS * (face(f).w & 0xffffu); }
 
 // Instance `i`'s record: world rows 0..12, inverse rows 12..24, 24 the root
-// of its tree, 25..27 its faces, 27 set when it sits at the identity.
+// of its tree, 25..27 its faces, 27 its flags: bit 0 set when it sits at
+// the identity, bit 1 when it casts no shadow.
 fn inst_at(i: u32) -> u32 { return p.insts.x + i * INST_WORDS; }
 fn inst_row(w: u32) -> vec4<f32> { return vec4<f32>(tf(w), tf(w + 1u), tf(w + 2u), tf(w + 3u)); }
 // Top-tree slot `s` → instance id.
@@ -85,7 +86,7 @@ fn tri_at(f: u32) -> Tri {
     var nb = unoct(a1.xy);
     var nc = unoct(a2.xy);
     let w = inst_at(v.w >> 16u);
-    if (data[w + 27u] == 0u) {
+    if ((data[w + 27u] & 1u) == 0u) {
         let r0 = inst_row(w);
         let r1 = inst_row(w + 4u);
         let r2 = inst_row(w + 8u);

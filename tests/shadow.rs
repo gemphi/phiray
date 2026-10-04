@@ -62,8 +62,7 @@ fn grey(px: &[u8], x: u32, y: u32) -> i32 {
 
 /// Display grey of scene-linear `v`.
 fn srgb(v: f32) -> i32 {
-    let c = if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
-    (c * 255.0 + 0.5) as i32
+    i32::from(phiray::Srgb::linear_to_byte(v))
 }
 
 #[test]
@@ -106,3 +105,38 @@ fn shadow_off_changes_nothing() {
     assert_eq!(off, plain);
 }
 
+
+/// An instance told to cast no shadow (`Scene::hide_shadow` — Viewport
+/// Display ▸ Shadow off, `OB_DRAW_NO_SHADOW_CAST`): the wall behind it is
+/// lit as the open wall, the block itself still shaded.
+#[test]
+fn an_instance_that_casts_no_shadow_leaves_the_wall_lit() {
+    let Some(gpu) = Ray::gpu() else { return };
+    // The block as its own instance, so it alone can be told.
+    let mut s = Scene::default();
+    let quad = |s: &mut Scene, q: [[f32; 3]; 4], n: [f32; 3]| {
+        for tri in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
+            let t = Tri::new(tri, [n; 3], [0.5, 0.5, 0.5, 1.0]);
+            let m = s.material(Mat::of(&t));
+            let v = tri.map(|p| s.vertex(p, n, [0.0; 2]));
+            s.face(v, m);
+        }
+    };
+    quad(&mut s, [[-2.0, 0.0, -2.0], [2.0, 0.0, -2.0], [2.0, 0.0, 2.0], [-2.0, 0.0, 2.0]], [0.0, -1.0, 0.0]);
+    let block = s.instance_of([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]], [1.0; 3], phiray::trace::hash::ObjectHash(0));
+    let (a, b) = (-0.5, 0.5);
+    quad(&mut s, [[a, -1.0, a], [b, -1.0, a], [b, -1.0, b], [a, -1.0, b]], [0.0, -1.0, 0.0]);
+    quad(&mut s, [[b, 0.0, a], [b, -1.0, a], [b, -1.0, b], [b, 0.0, b]], [1.0, 0.0, 0.0]);
+    quad(&mut s, [[a, 0.0, a], [a, -1.0, a], [a, -1.0, b], [a, 0.0, b]], [-1.0, 0.0, 0.0]);
+    s.hide_shadow(block);
+    let mut t = Tracer::from_scene(&gpu, s).expect("a scene");
+    t.set_mode(Mode::Solid);
+    let cam = shadowed(0.5);
+    let (mut px, mut done) = t.render(&gpu, cam, W, W);
+    while !done {
+        (px, done) = t.render(&gpu, cam, W, W);
+    }
+    let mid = W / 2;
+    assert_eq!(grey(&px, 36, mid), grey(&px, 6, mid), "no shadow falls on the wall");
+    assert_ne!(grey(&px, 36, mid), srgb(0.25));
+}

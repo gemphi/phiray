@@ -34,13 +34,17 @@ pub struct Instance {
     /// `BLI_ghashutil_strhash_p_murmur(ob.id.name)`: the seed of Solid's
     /// Color ▸ Random (`hash.rs`). 0 until told.
     pub hash: u32,
+    /// Whether a shadow ray may meet it — Workbench's Viewport Display ▸
+    /// Shadow (`OB_DRAW_NO_SHADOW_CAST`) in Solid, Cycles' Ray Visibility ▸
+    /// Shadow (`OB_HIDE_SHADOW`) in Rendered. Casts until told.
+    pub casts_shadow: bool,
 }
 
 pub const IDENTITY: [[f32; 4]; 4] = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
 
 impl Instance {
     pub fn at(world: [[f32; 4]; 4], face_lo: u32, vert_lo: u32) -> Self {
-        Self { world, face_lo, face_hi: face_lo, vert_lo, vert_hi: vert_lo, color: [1.0; 3], hash: 0 }
+        Self { world, face_lo, face_hi: face_lo, vert_lo, vert_hi: vert_lo, color: [1.0; 3], hash: 0, casts_shadow: true }
     }
 
     /// The object's colour and the hash of its id name, for Solid's Color
@@ -101,7 +105,8 @@ impl Instance {
 
     /// The instance's words for the kernel: the world's three rows, the
     /// inverse's three rows, then the root of its tree, its face range,
-    /// whether it sits at the identity (the kernel then places nothing),
+    /// whether it sits at the identity (the kernel then places nothing)
+    /// and whether it casts a shadow,
     /// its object colour and its name hash.
     pub fn words(&self, blas_root: u32) -> [u32; INSTANCE_WORDS] {
         let mut w = [0u32; INSTANCE_WORDS];
@@ -120,7 +125,9 @@ impl Instance {
         w[24] = blas_root;
         w[25] = self.face_lo;
         w[26] = self.face_hi;
-        w[27] = u32::from(self.world == IDENTITY);
+        // Bit 0: at the identity; bit 1: casts no shadow (`trace`'s any-hit
+        // rays pass it by).
+        w[27] = u32::from(self.world == IDENTITY) | (u32::from(!self.casts_shadow) << 1);
         for k in 0..3 {
             w[28 + k] = self.color[k].to_bits();
         }
@@ -153,5 +160,8 @@ mod tests {
         assert_eq!(b.lo, [-1.0, 2.0, 3.0]);
         assert_eq!(b.hi, [1.0, 4.0, 5.0]);
         assert_eq!((inst.words(7)[24], inst.words(7)[27], Instance::at(IDENTITY, 0, 0).words(0)[27]), (7, 0, 1));
+        let mut shadowless = Instance::at(IDENTITY, 0, 0);
+        shadowless.casts_shadow = false;
+        assert_eq!(shadowless.words(0)[27], 0b11, "the flags share the word");
     }
 }

@@ -32,6 +32,7 @@ struct Camera {
     ssao: vec4<u32>,
     shadow: vec4<f32>,
     shadow_fade: vec4<f32>,
+    matcap: vec4<u32>,
     lights: array<Light, 16>,
 }
 struct Light { pos: vec3<f32>, kind: u32, color: vec3<f32>, size: f32, dir: vec3<f32>, cone: f32 }
