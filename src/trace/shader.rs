@@ -41,9 +41,23 @@ impl Kernel for Taa {
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/taa.wgsl"));
 }
 
+/// SMAA over the gather's first samples (`smaa.wgsl`, `smaa_lib.wgsl`):
+/// Workbench's `smaa_edge_detect_ps_`, `smaa_aa_weight_ps_` and
+/// `smaa_resolve_ps_` as three stages (`Camera::slice.z` 1–3). It binds
+/// the image and the area and search tables (`smaa.rs`).
+pub struct Smaa;
+
+impl Kernel for Smaa {
+    const NAME: &'static str = "smaa";
+    const BINDS: &'static [Bind] = &[Bind::Write, Bind::Read];
+    type Params = Camera;
+    const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/smaa_lib.wgsl"), include_str!("wgsl/smaa.wgsl"));
+}
+
 /// Workbench's Solid effects (`fx.wgsl`): the cavity (SSAO) and curvature
 /// effects and the object outline over the opaque pass's buffers, before
-/// the gather. It binds the image and the blue-noise jitter table
+/// the gather, and the Depth of Field's stages (`dof.wgsl`, `Camera::
+/// slice.z`). It binds the image and the blue-noise jitter table
 /// (`blue_noise.rs`).
 pub struct Fx;
 
@@ -51,7 +65,7 @@ impl Kernel for Fx {
     const NAME: &'static str = "fx";
     const BINDS: &'static [Bind] = &[Bind::Write, Bind::Read];
     type Params = Camera;
-    const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/fx.wgsl"));
+    const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/fx.wgsl"), include_str!("wgsl/dof.wgsl"));
 }
 
 macro_rules! trace_wgsl {

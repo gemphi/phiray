@@ -307,6 +307,13 @@ pub struct Camera {
     /// (`V3D_SHADING_MATCAP_FLIP_X`), _]`; a 0 diffuse word under MatCap
     /// lights as Studio.
     pub matcap: [u32; 4],
+    /// Workbench's Depth of Field (`workbench_effect_dof.cc`, `DofPass::
+    /// init`), Solid alone: `[aperture_size — 0 for off, distance (−focus),
+    /// invsensor_size per frame pixel (the frame's width times it is
+    /// `dof_invsensorsize`), far (−clip_end: the depth under a pixel with
+    /// nothing drawn)]`. The bokeh's shape is `blades`, `blade_spin` and
+    /// `aperture_ratio`, the camera's own.
+    pub dof: [f32; 4],
     pub lights: [Light; LIGHTS],
 }
 

@@ -12,13 +12,22 @@ mod mat;
 mod pose;
 mod scene;
 mod shader;
+pub mod smaa;
 pub mod taa;
 mod trees;
 mod visible;
 
 pub use kernel::{Atlas, Camera, LIGHTS, Light, NO_TEX, Tri, View};
 pub use lamps::Lamps;
-pub use shader::{Fx, Preview, Preview4, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
+/// A dispatch after the slices (`Tracer::tail`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BTail {
+    Fx,
+    Taa,
+    Smaa,
+}
+
+pub use shader::{Fx, Preview, Preview4, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
 pub use instance::Instance;
 pub use mat::Mat;
 pub use srgb::Srgb;
@@ -47,6 +56,8 @@ pub struct Tracer {
     /// EEVEE's blue-noise table for the SSAO's per-pixel jitter
     /// (`blue_noise.rs`), bound to the effects pass.
     noise: GpuArray<u32>,
+    /// SMAA's area and search tables (`smaa.rs`), bound to its passes.
+    smaa: GpuArray<u32>,
     raster: bool,
     /// Faces in the scene (the prepass draws three vertices each).
     n_faces: u32,
@@ -69,6 +80,8 @@ pub struct Tracer {
     mode: Mode,
     /// Samples a still view refines to (`SAMPLES` unless set).
     target: u32,
+    /// Solid and Wireframe's anti-aliasing count (`set_aa_samples`).
+    aa: u32,
     /// What a new pose of the scene reuses (`pose.rs`).
     pose: Option<pose::Pose>,
 }
@@ -173,6 +186,7 @@ impl Tracer {
             vis: None,
             blank: GpuArray::zeroed(gpu, 4),
             noise: GpuArray::from(gpu, &blue_noise::BlueNoise::words()),
+            smaa: GpuArray::from(gpu, &smaa::SmaaTables::words()),
             // Hardware rasterizes its primary hits (Workbench's prepass); a
             // software adapter traces them, where walking the tree is the
             // cheaper of the two (`visible.rs`).
@@ -188,6 +202,7 @@ impl Tracer {
             extent,
             mode: Mode::Rendered,
             target: Self::SAMPLES,
+            aa: taa::SAMPLES,
             pose: Some(pose),
         })
     }
@@ -223,15 +238,41 @@ impl Tracer {
     }
 
     /// How many samples this mode averages. Material Preview is one
-    /// deterministic dispatch; Solid and Wireframe draw Workbench's eight
-    /// jittered samples and gather them (`taa.rs`); the path tracer refines
-    /// to the target.
+    /// deterministic dispatch; Solid and Wireframe draw Workbench's
+    /// jittered samples — `aa_samples`, at least one — and gather them
+    /// (`taa.rs`); the path tracer refines to the target.
     pub fn samples(&self) -> u32 {
         match self.mode {
             Mode::Preview => 1,
-            Mode::Solid | Mode::Wire => if self.jittered() { taa::SAMPLES } else { 1 },
+            Mode::Solid | Mode::Wire => self.aa_samples().max(1),
             _ => self.target,
         }
+    }
+
+    /// Workbench's anti-aliasing count (`SceneState::samples_len`,
+    /// `set_aa_samples`'s number as `taa::count` takes it): 0 is no
+    /// anti-aliasing (`SCE_DISPLAY_AA_OFF`: the one sample, no SMAA), 1 the
+    /// single pass with SMAA alone (`_FXAA`), else that many jittered
+    /// samples with SMAA over the first four.
+    pub fn aa_samples(&self) -> u32 {
+        taa::count(self.aa)
+    }
+
+    /// How many rows a tile must be drawn over into its neighbour for the
+    /// seam not to show (`rendered/still.rs`): the effects and the gather
+    /// read a pixel's neighbours, two rows; a Solid or Wireframe frame the
+    /// single pass leaves SMAA on reads as far as its searches go — 16
+    /// steps of two texels and the step the search table adds, the edges
+    /// two texels further and the blend one more (`smaa_lib.wgsl`): 40.
+    pub fn seam_rows(&self) -> u32 {
+        if self.jittered() && self.aa_samples() == 1 { 40 } else { 2 }
+    }
+
+    /// Anti-alias Solid and Wireframe with `n` samples (`U.viewport_aa` in
+    /// the viewport, `Scene.display.render_aa` for a render; 0 off, 1 a
+    /// single pass). Eight until set. Takes effect from the next view.
+    pub fn set_aa_samples(&mut self, n: u32) {
+        self.aa = n;
     }
 
     /// Whether the mode anti-aliases by Workbench's jittered samples: Solid
@@ -247,7 +288,36 @@ impl Tracer {
     /// opaque pass: the object outline, the cavity (SSAO) or the curvature
     /// effect asked for, and X-ray off — the transparent pass has none.
     fn effects(&self, cam: &Camera) -> bool {
-        self.mode == Mode::Solid && cam.see_through <= 0.0 && (cam.fx[0] > 0.0 || cam.fx[1] > 0.0 || cam.fx[2] > 0.0 || cam.ssao[0] > 0)
+        self.mode == Mode::Solid && cam.see_through <= 0.0 && (cam.fx[0] > 0.0 || cam.fx[1] > 0.0 || cam.fx[2] > 0.0 || cam.ssao[0] > 0 || cam.dof[0] > 0.0)
+    }
+
+    /// The Depth of Field's stages after the composite (`dof.wgsl`,
+    /// `SceneState::draw_dof`): `(stage, pixels)` for the half, quarter and
+    /// eighth images, the two blurs and the full-size resolve — none when
+    /// it is off, under X-ray, or the image is too small to halve thrice.
+    fn dof_steps(&self, cam: &Camera, w: u32, h: u32) -> Vec<(u32, u32)> {
+        if !self.effects(cam) || cam.dof[0] <= 0.0 || w < 8 || h < 8 {
+            return Vec::new();
+        }
+        let (half, quarter, eighth) = ((w / 2) * (h / 2), (w / 4) * (h / 4), (w / 8) * (h / 8));
+        vec![(1, half), (2, quarter), (3, eighth), (4, half), (5, half), (6, w * h)]
+    }
+
+    /// The dispatches after the slices, `(kernel, stage, pixels)`: the
+    /// effects pass and the Depth of Field's stages (`dof_steps`), then
+    /// for a jittered mode the anti-aliasing gather and SMAA's three
+    /// stages (`smaa.wgsl`), which return at once from the fourth sample.
+    fn tail(&self, effects: bool, dof: &[(u32, u32)], n: u32) -> Vec<(BTail, u32, u32)> {
+        let mut tail = Vec::new();
+        if effects {
+            tail.push((BTail::Fx, 0, n));
+        }
+        tail.extend(dof.iter().map(|&(stage, items)| (BTail::Fx, stage, items)));
+        if self.jittered() {
+            tail.push((BTail::Taa, 0, n));
+            tail.extend((1..=3).map(|stage| (BTail::Smaa, stage, n)));
+        }
+        tail
     }
 
     /// Refine a still view to `n` samples (Blender's viewport / render
@@ -289,6 +359,10 @@ impl Tracer {
         cam.insts = self.insts;
         cam.frame = 0;
         cam.slice = [0; 4];
+        // The anti-aliasing count is part of the view: a new count starts
+        // the samples over (`SceneState`: `reset_taa` when `samples_len`
+        // changes).
+        cam.taa = [0.0, 0.0, 0.0, if self.jittered() { self.aa_samples() as f32 } else { 0.0 }];
         let drawn = self.rasterizes(&cam);
         cam.vis = self.vis_words(&cam, drawn, w);
         let same = self.last.is_some_and(|l| bytemuck::bytes_of(&l)[8..] == bytemuck::bytes_of(&cam)[8..]) && self.size == (w, h);
@@ -299,8 +373,9 @@ impl Tracer {
         self.last = Some(cam);
         cam.frame = self.frame;
         if self.jittered() {
-            let [jx, jy] = taa::offset(self.frame);
-            cam.taa = [jx, jy, taa::accumulated_weight(self.frame), 0.0];
+            let aa = self.aa_samples();
+            let [jx, jy] = taa::offset(self.frame, aa);
+            cam.taa = [jx, jy, taa::accumulated_weight(self.frame, aa), aa as f32];
         }
         // One slice's pixels: `[first, count]` of slice `k`.
         let part = |k: u32| {
@@ -309,7 +384,9 @@ impl Tracer {
             [first, last - first, 0, 0]
         };
         let effects = self.effects(&cam);
-        let steps = slices as usize + usize::from(effects) + usize::from(self.jittered());
+        let dof = self.dof_steps(&cam, w, h);
+        let tail = self.tail(effects, &dof, n);
+        let steps = slices as usize + tail.len();
         if self.size != (w, h) || self.pass.is_empty() || self.pass.len() != steps || drawn != self.vis.is_some() {
             // The image a new tree (`retree`) records the pass again over
             // keeps its samples; a new size or kernel starts from zero —
@@ -340,13 +417,15 @@ impl Tracer {
                     _ => self.pass.add_over::<Trace>(gpu, n, items, cam, &bufs),
                 };
             }
-            // The effects, then the anti-aliasing gather, over the whole
-            // image after the slices.
-            if effects {
-                self.pass.add::<Fx>(gpu, n, cam, &[px.buffer(), self.noise.buffer()]);
-            }
-            if self.jittered() {
-                self.pass.add::<Taa>(gpu, n, cam, &[px.buffer()]);
+            // The effects, then the anti-aliasing gather and SMAA, over the
+            // whole image after the slices.
+            for &(step, stage, items) in &tail {
+                let cam = Camera { slice: [0, 0, stage, 0], ..cam };
+                match step {
+                    BTail::Fx => self.pass.add_over::<Fx>(gpu, n, items, cam, &[px.buffer(), self.noise.buffer()]),
+                    BTail::Taa => self.pass.add::<Taa>(gpu, n, cam, &[px.buffer()]),
+                    BTail::Smaa => self.pass.add::<Smaa>(gpu, n, cam, &[px.buffer(), self.smaa.buffer()]),
+                };
             }
             self.px = Some(px);
             self.size = (w, h);
@@ -355,8 +434,9 @@ impl Tracer {
                 let cam = Camera { n, groups_x: Dispatch::new(part(k)[1]).x, slice: part(k), ..cam };
                 self.pass.set(gpu, k as usize, 0, &cam);
             }
-            for k in slices as usize..steps {
-                self.pass.set(gpu, k, 0, &Camera { n, groups_x: Dispatch::new(n).x, ..cam });
+            for (k, &(_, stage, items)) in tail.iter().enumerate() {
+                // A Depth of Field stage runs over its own image size.
+                self.pass.set(gpu, slices as usize + k, 0, &Camera { n, groups_x: Dispatch::new(items).x, slice: [0, 0, stage, 0], ..cam });
             }
         }
         if let Some(vis) = &self.vis {

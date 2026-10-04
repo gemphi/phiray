@@ -13,6 +13,21 @@ use std::sync::OnceLock;
 
 /// `U.viewport_aa`'s default: eight samples.
 pub const SAMPLES: u32 = 8;
+/// The sample counts Workbench has a table for (`TaaSamples::x5 … x32`,
+/// `eSceneDisplay_AA`); 0 is no anti-aliasing and 1 a single pass with
+/// SMAA alone (`SCE_DISPLAY_AA_OFF`, `_FXAA`).
+pub const COUNTS: [u32; 5] = [5, 8, 11, 16, 32];
+
+/// A count asked for as Workbench takes it: 0 and 1 as they are, else
+/// the table whose count it is — `setup_view`'s `switch` falls back to
+/// the five-sample table for any other number, as this does.
+pub fn count(asked: u32) -> u32 {
+    match asked {
+        0 | 1 => asked,
+        n if COUNTS.contains(&n) => n,
+        _ => 5,
+    }
+}
 /// `setup_taa_weights`: a 2-pixel-wide filter over the 3 × 3 neighbourhood.
 const FILTER_WIDTH: f32 = 2.0;
 
@@ -162,11 +177,15 @@ pub fn table(n: usize) -> Vec<[f32; 2]> {
     s
 }
 
-/// Sample `k` of `SAMPLES`'s offset, in `−1 ..= 1` (half a pixel either way
-/// once `window_translate_m4` divides it by the resolution).
-pub fn offset(k: u32) -> [f32; 2] {
-    static TABLE: OnceLock<Vec<[f32; 2]>> = OnceLock::new();
-    let t = TABLE.get_or_init(|| table(SAMPLES as usize));
+/// Sample `k` of `n`'s offset, in `−1 ..= 1` (half a pixel either way
+/// once `window_translate_m4` divides it by the resolution); `n` one of
+/// `COUNTS` (`count`), or 0 or 1 — a single sample, drawn unjittered.
+pub fn offset(k: u32, n: u32) -> [f32; 2] {
+    static TABLES: OnceLock<Vec<Vec<[f32; 2]>>> = OnceLock::new();
+    let tables = TABLES.get_or_init(|| COUNTS.iter().map(|&n| table(n as usize)).collect());
+    let Some(t) = COUNTS.iter().position(|&c| c == count(n)).map(|i| &tables[i]) else {
+        return [0.0, 0.0];
+    };
     t[(k as usize) % t.len()]
 }
 
@@ -196,9 +215,9 @@ pub fn weights(offset: [f32; 2]) -> ([f32; 9], f32) {
     (w, sum)
 }
 
-/// The weight the resolve divides by once samples `0 ..= k` are in.
-pub fn accumulated_weight(k: u32) -> f32 {
-    (0..=k).map(|s| weights(offset(s)).1).sum()
+/// The weight the resolve divides by once samples `0 ..= k` of `n` are in.
+pub fn accumulated_weight(k: u32, n: u32) -> f32 {
+    (0..=k).map(|s| weights(offset(s, n)).1).sum()
 }
 
 #[cfg(test)]
@@ -218,7 +237,7 @@ mod tests {
                 assert!(d > 0.25, "{i} and {j} sit {d} apart: {t:?}");
             }
         }
-        assert_eq!(offset(8), offset(0), "the table wraps");
+        assert_eq!(offset(8, 8), offset(0, 8), "the table wraps");
         // The generator is Blender's: its first draw after seed 31415926 + 8.
         let mut rng = Rng::new(31415926 + 8);
         let first = rng.get_double();
@@ -235,6 +254,24 @@ mod tests {
         assert!((sum - (w.iter().sum::<f32>())).abs() < 1e-6);
         let shifted = weights([1.0, 0.0]);
         assert!(shifted.0[7] > shifted.0[1], "a sample to the right weighs the right neighbour more");
-        assert!(accumulated_weight(7) > accumulated_weight(0));
+        assert!(accumulated_weight(7, 8) > accumulated_weight(0, 8));
+    }
+
+    /// `eSceneDisplay_AA`: five tables, each centred first; off and the
+    /// single pass draw one unjittered sample; a count without a table
+    /// takes the five-sample one, as `setup_view` does.
+    #[test]
+    fn every_count_has_its_table_and_the_rest_fall_back() {
+        for n in COUNTS {
+            assert_eq!(table(n as usize).len(), n as usize);
+            assert_eq!(offset(0, n), [0.0, 0.0]);
+            assert_eq!(offset(n, n), offset(0, n));
+            assert!((1..n).all(|k| offset(k, n) != [0.0, 0.0]), "{n}: every later sample is jittered");
+        }
+        assert_ne!(offset(1, 5), offset(1, 8), "each count its own table");
+        assert_eq!((count(0), count(1), count(8), count(32)), (0, 1, 8, 32));
+        assert_eq!((count(3), count(7)), (5, 5));
+        assert_eq!((offset(3, 0), offset(3, 1)), ([0.0, 0.0], [0.0, 0.0]));
+        assert!((accumulated_weight(0, 1) - weights([0.0, 0.0]).1).abs() < 1e-6);
     }
 }

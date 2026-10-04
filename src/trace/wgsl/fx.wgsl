@@ -8,6 +8,7 @@
 // (`solid.wgsl`). The colour is then put through the view transform and
 // the floor grid laid over it — the sample `taa.wgsl` gathers. Nothing
 // here for X-ray (Workbench's transparent pass has none) or the Wireframe.
+// Depth of Field (`dof.wgsl`) runs as further steps of this kernel.
 
 @group(0) @binding(0) var<uniform> p: Camera;
 @group(0) @binding(1) var<storage, read_write> px: array<u32>;
@@ -150,9 +151,23 @@ fn curvature(up: u32, down: u32, right: u32, left: u32) -> f32 {
     return 2.0 * soft_clamp(diff, p.fx.y);
 }
 
+// The pixel finished: the view transform, the floor grid laid over, and
+// the sample left for the gather (`taa.wgsl`).
+fn fx_finish(i: u32, lin: vec3<f32>) {
+    let g = three(10u * p.n + 3u * i);
+    let cover = bitcast<f32>(px[13u * p.n + i]);
+    let shown = srgb(lin) * (1.0 - cover) + g;
+    let a = 14u * p.n + 3u * i;
+    px[a] = bitcast<u32>(shown.x);
+    px[a + 1u] = bitcast<u32>(shown.y);
+    px[a + 2u] = bitcast<u32>(shown.z);
+}
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = item(gid, p.groups_x);
+    // A Depth of Field stage (`dof.wgsl`) runs over its own image size.
+    if (p.slice.z != 0u) { dof_stage(p.slice.z, i); return; }
     if (i >= p.n) { return; }
     let x = i32(i % p.w);
     let y = i32(i / p.w);
@@ -179,11 +194,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let opacity = 1.0 - dot(same, vec4<f32>(0.25));
         lin = lin * (1.0 - opacity) + p.outline.rgb * opacity;
     }
-    let g = three(10u * p.n + 3u * i);
-    let cover = bitcast<f32>(px[13u * p.n + i]);
-    let shown = srgb(lin) * (1.0 - cover) + g;
-    let a = 14u * p.n + 3u * i;
-    px[a] = bitcast<u32>(shown.x);
-    px[a + 1u] = bitcast<u32>(shown.y);
-    px[a + 2u] = bitcast<u32>(shown.z);
+    // Depth of Field on: the composite goes back for its stages to read,
+    // and `dof_resolve` finishes the pixel.
+    if (p.dof.x > 0.0) {
+        let a = 7u * p.n + 3u * i;
+        px[a] = bitcast<u32>(lin.x);
+        px[a + 1u] = bitcast<u32>(lin.y);
+        px[a + 2u] = bitcast<u32>(lin.z);
+        return;
+    }
+    fx_finish(i, lin);
 }
