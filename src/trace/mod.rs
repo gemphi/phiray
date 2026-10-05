@@ -18,7 +18,7 @@ pub mod taa;
 mod trees;
 mod visible;
 
-pub use kernel::{Atlas, Camera, LIGHTS, Light, NO_MAT, NO_TEX, Tri, View};
+pub use kernel::{AREA_DISK, AREA_ELLIPSE, AREA_RECT, AREA_SQUARE, Atlas, Camera, LIGHTS, Light, NO_MAT, NO_TEX, Tri, View};
 pub use lamps::Lamps;
 /// A dispatch after the slices (`Tracer::tail`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

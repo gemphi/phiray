@@ -19,6 +19,9 @@
 const SHADOW_TAPS: u32 = 8u;
 // Under this, a light's shape is a point and its shadow is hard.
 const SHADOW_HARD: f32 = 1e-5;
+// `Light::shape` (`eLightAreaShape`): the two rounded shapes.
+const AREA_DISK: u32 = 4u;
+const AREA_ELLIPSE: u32 = 5u;
 
 // `van_der_corput_radical_inverse`.
 fn radical_inverse(n: u32) -> f32 {
@@ -75,16 +78,21 @@ fn lamp_visible(pos: vec3<f32>, li: Light, l: vec3<f32>, dist: f32) -> f32 {
         return sum / f32(SHADOW_TAPS);
     }
     if (li.size < SHADOW_HARD) { return visible(pos, l, dist); }
-    // An Area light is a rectangle in its own plane, the taps spread over
-    // it rather than over a disk; `Light::size` is its edge, so the taps
-    // run half that either way. Blender's Size Y is not read, so the
-    // rectangle is square.
+    // An Area light's taps spread over its own shape in its own plane
+    // (`shadow_ray_generate_punctual` for `LIGHT_RECT`): a rectangle takes
+    // the taps straight, a disk or an ellipse takes them through
+    // `sample_disk`, and its axes are the object's — `right` across
+    // `size`, the other way across `size_y`, which Blender leaves equal to
+    // `size` for a Square and a Disk.
     if (li.kind == 3u) {
-        let half_edge = li.size * 0.5;
+        let half = vec2<f32>(li.size, li.size_y) * 0.5;
+        let round = li.shape == AREA_DISK || li.shape == AREA_ELLIPSE;
+        let up = cross(li.dir, li.right);
         var sum = 0.0;
         for (var k = 0u; k < SHADOW_TAPS; k++) {
-            let square = (hammersley_2d(k, SHADOW_TAPS) * 2.0 - 1.0) * half_edge;
-            let to = li.pos + onb(li.dir, square.x, square.y) - pos;
+            let rand = hammersley_2d(k, SHADOW_TAPS);
+            let on_shape = select(rand * 2.0 - 1.0, sample_disk(rand), round) * half;
+            let to = li.pos + li.right * on_shape.x + up * on_shape.y - pos;
             sum += visible(pos, normalize(to), length(to) * 0.999);
         }
         return sum / f32(SHADOW_TAPS);

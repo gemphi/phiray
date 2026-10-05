@@ -382,19 +382,41 @@ fn rgbe(r: f32, g: f32, b: f32) -> u32 {
 
 /// A Blender light (`kind`: 0 sun, 1 point, 2 spot, 3 area).
 /// `color` is colour × strength (sun, W/m²) or colour × power (W).
+///
+/// The shape fields are what give the light's shadow its penumbra
+/// (`shadow.wgsl`): `size` is a sun's angular diameter in radians, a point's
+/// or spot's radius in metres, or an area light's edge along its own X; an
+/// area light adds `right`, `size_y` and `shape`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct Light {
     pub pos: [f32; 3],
     pub kind: u32,
     pub color: [f32; 3],
-    /// Soft-shadow size: sun angle (rad) or radius (m).
+    /// Soft-shadow size: sun angle (rad), radius (m), or an area light's
+    /// edge along `right` (m, the object's scale in it).
     pub size: f32,
     /// Direction the light shines (sun, spot, area).
     pub dir: [f32; 3],
     /// Spot: cosine of the half cone angle.
     pub cone: f32,
+    /// An area light's own X axis, normalized; its plane is `dir`'s normal.
+    pub right: [f32; 3],
+    /// An area light's edge across `right`, in its plane (m, scaled).
+    /// Blender gives Square and Disk one size, so this equals `size` for
+    /// those (`eevee_light.cc`: Size Y is read for Rectangle and Ellipse).
+    pub size_y: f32,
+    /// An area light's `Light.area_shape`: 0 square, 1 rectangle, 4 disk,
+    /// 5 ellipse — a disk and an ellipse are rounded, the others not.
+    pub shape: u32,
+    pub _pad: [u32; 3],
 }
+
+/// `Light::shape` (`eLightAreaShape`).
+pub const AREA_SQUARE: u32 = 0;
+pub const AREA_RECT: u32 = 1;
+pub const AREA_DISK: u32 = 4;
+pub const AREA_ELLIPSE: u32 = 5;
 
 /// All textures in one `u32` buffer: `[count, (offset, w, h) × count, texels…]`,
 /// texels packed RGBA8 (sRGB), row 0 at the top.

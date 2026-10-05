@@ -177,7 +177,7 @@ fn a_lamp_casts_a_shadow_as_soft_as_its_radius() {
         let geo: Vec<Tri> = if blocked { scene.clone() } else { card(3.0, 2.0, None) };
         render(Mode::Preview, cam, &geo, &atlas).0
     };
-    let lamp = |size: f32| Light { pos: [0.6, -2.0, 0.0], kind: 1, color: [800.0, 800.0, 800.0], size, dir: [0.0, 1.0, 0.0], cone: 0.0 };
+    let lamp = |size: f32| Light { pos: [0.6, -2.0, 0.0], kind: 1, color: [800.0, 800.0, 800.0], size, dir: [0.0, 1.0, 0.0], cone: 0.0, ..Light::default() };
     let shot = |size: f32, blocked: bool| lit_by(lamp(size), blocked);
     // The shadow lies to the left of the small card's silhouette; the row
     // through the middle of the frame crosses it.
@@ -212,4 +212,53 @@ fn a_lamp_casts_a_shadow_as_soft_as_its_radius() {
     let sun_between = |px: &[u8]| band(px).into_iter().filter(|&v| v > slo && v < shi).count();
     assert!(sun_open[8] > sun_umbra + 40.0, "the blocker shadows the row under a sun too: {} {sun_umbra}", sun_open[8]);
     assert!(sun_between(&lit_by(sun(0.2), true)) > sun_between(&sharp), "a sun's angle softens its shadow");
+}
+
+/// An area light's penumbra is as wide as the light is *in that
+/// direction*: a strip along X blurs its shadow's vertical edges and
+/// barely its horizontal ones, and turning the same strip into the plane's
+/// other axis swaps that. The taps spread over the light's own shape in
+/// its own plane (`shadow.wgsl`), so the shape has to reach the record
+/// (`AREA_RECT`, `right`, `size_y`) for this to hold.
+#[test]
+fn an_area_lights_penumbra_follows_its_own_shape() {
+    if Ray::gpu().is_none() {
+        return;
+    }
+    let atlas = sky_atlas();
+    let mut scene = card(3.0, 2.0, None);
+    scene.extend(card(0.3, 1.0, None));
+    // The light shines along +y, so its plane spans world X and Z and its
+    // `right` is X; `size` lies along X and `size_y` across it.
+    let strip = |size: f32, size_y: f32| Light {
+        pos: [0.6, -2.0, 0.0],
+        kind: 3,
+        color: [800.0, 800.0, 800.0],
+        size,
+        dir: [0.0, 1.0, 0.0],
+        cone: 0.0,
+        right: [1.0, 0.0, 0.0],
+        size_y,
+        shape: phiray::AREA_RECT,
+        _pad: [0; 3],
+    };
+    let shot = |li: Light, blocked: bool| {
+        let mut lights = [Light::default(); phiray::LIGHTS];
+        lights[0] = li;
+        let cam = Camera { count: 1, lights, envmap: 0, env_cdf: 0, preview: [0; 4], env: [0.05, 0.05, 0.05, 1.0], ..camera() };
+        let geo: Vec<Tri> = if blocked { scene.clone() } else { card(3.0, 2.0, None) };
+        render(Mode::Preview, cam, &geo, &atlas).0
+    };
+    const EDGE: u32 = 12;
+    let band = |px: &[u8]| (0..EDGE).map(|x| luma(px, x, W / 2)).collect::<Vec<f32>>();
+    let point = shot(strip(0.0, 0.0), true);
+    let open = band(&shot(strip(0.0, 0.0), false));
+    let umbra = band(&point).into_iter().fold(f32::MAX, f32::min);
+    let (lo, hi) = (umbra + 0.15 * (open[0] - umbra), open[0] - 0.15 * (open[0] - umbra));
+    let between = |px: &[u8]| band(px).into_iter().filter(|&v| v > lo && v < hi).count();
+    // The scan is horizontal, so the X edge is what blurs it.
+    let wide = between(&shot(strip(1.2, 0.02), true));
+    let tall = between(&shot(strip(0.02, 1.2), true));
+    assert!(wide > tall, "a strip across the scan softens it, one along it does not: {wide} vs {tall}");
+    assert!(tall <= 1, "the narrow direction stays a step: {tall}");
 }
