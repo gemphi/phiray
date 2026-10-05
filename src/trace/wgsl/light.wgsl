@@ -4,6 +4,32 @@ fn onb(n: vec3<f32>, a: f32, b: f32) -> vec3<f32> {
     return tx * a + ty * b;
 }
 
+// How much of a spot reaches a surface whose direction to the light is `l`
+// (EEVEE's `light_spot_attenuation`, `eevee_light_lib.bsl.hh`). The cone's
+// cross-section is an ellipse when the object's scale is not uniform:
+// `spot_scale` is `scale.z / scale.xy` (`eevee_light.cc`'s `spot_size_inv`),
+// so a spot stretched in Y lights further in Y. At `[1, 1]` the term is
+// `cos` of the angle off the axis and this is batch 147's smoothstep
+// exactly.
+fn spot_mask(li: Light, l: vec3<f32>) -> f32 {
+    // EEVEE works in the light's own frame, where +Z is the way the lamp
+    // looks from (`-dir`) and X and Y are the object's. `l` is normalized
+    // at both call sites, so `z` is the cosine of the angle off the axis.
+    let z = -dot(l, li.dir);
+    if (z <= 0.0) { return 0.0; }
+    // A record with no axes or no scale is the round case, and so is the
+    // common one: `z` is what the ellipse comes to at `[1, 1]`. EEVEE
+    // keeps the same guard on the CPU, setting `spot_size_inv` to 1 for a
+    // light with no cone so the field is never garbage.
+    var ellipse = z;
+    if (dot(li.right, li.right) > 1e-12 && dot(li.spot_scale, li.spot_scale) > 1e-12) {
+        let d = -l;
+        let xy = vec2<f32>(dot(d, li.right), dot(d, cross(li.dir, li.right))) * li.spot_scale;
+        ellipse = inverseSqrt(1.0 + dot(xy, xy) / (z * z));
+    }
+    return smoothstep(li.cone, li.cone + li.blend, ellipse);
+}
+
 // Direction inside a cone of half-angle `ang` around `axis`.
 fn cone_dir(axis: vec3<f32>, ang: f32, seed: ptr<function, u32>) -> vec3<f32> {
     if (ang <= 0.0) { return axis; }
@@ -208,7 +234,7 @@ fn lights(s: Surf, seed: ptr<function, u32>) -> vec3<f32> {
         let l = to / sqrt(d2);
         var e = li.color / (4.0 * PI * PI * d2);
         if (li.kind == 2u) {
-            e *= smoothstep(li.cone, li.cone + li.blend, dot(-l, li.dir));
+            e *= spot_mask(li, l);
         } else if (li.kind == 3u) {
             e *= max(dot(-l, li.dir), 0.0) * 2.0;
         }

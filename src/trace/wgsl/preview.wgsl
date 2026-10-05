@@ -117,7 +117,7 @@ fn preview_lamps(s: Surf) -> vec3<f32> {
         let l = to / sqrt(d2);
         var e = li.color / (4.0 * PI * PI * d2);
         if (li.kind == 2u) {
-            e *= smoothstep(li.cone, li.cone + li.blend, dot(-l, li.dir));
+            e *= spot_mask(li, l);
         } else if (li.kind == 3u) {
             e *= max(dot(-l, li.dir), 0.0) * 2.0;
         }

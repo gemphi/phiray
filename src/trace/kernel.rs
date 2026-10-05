@@ -386,7 +386,8 @@ fn rgbe(r: f32, g: f32, b: f32) -> u32 {
 /// The shape fields are what give the light's shadow its penumbra
 /// (`shadow.wgsl`): `size` is a sun's angular diameter in radians, a point's
 /// or spot's radius in metres, or an area light's edge along its own X; an
-/// area light adds `right`, `size_y` and `shape`.
+/// area light adds `right`, `size_y` and `shape`; a spot adds `cone`,
+/// `blend` and `spot_scale`, and shares `right`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct Light {
@@ -413,7 +414,11 @@ pub struct Light {
     /// (`eevee_light.cc`'s `spot_blend`): the cone fades over
     /// `cone ..= cone + blend`, so 0 is a hard edge.
     pub blend: f32,
-    pub _pad: [u32; 2],
+    /// A spot's cone across its own X and Y, `scale.z / scale.xy` of the
+    /// object (`eevee_light.cc`'s `spot_size_inv`): `[1, 1]` leaves the
+    /// cone round, and anything else makes its cross-section an ellipse
+    /// (`spot_mask` in `light.wgsl`). Zero for every other kind.
+    pub spot_scale: [f32; 2],
 }
 
 /// `Light::shape` (`eLightAreaShape`).

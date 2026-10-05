@@ -301,3 +301,68 @@ fn a_spots_blend_fades_the_edge_of_its_cone() {
     assert!(none <= 2, "Blend 0 is a hard edge: {none} pixels across it");
     assert!(some > none && wide > some, "the edge widens with Blend: {none} {some} {wide}");
 }
+
+/// A spot's cone follows the object's scale: squash the object and the pool
+/// of light is an ellipse, not a circle (EEVEE's `spot_size_inv` through
+/// `light_spot_attenuation`'s `ellipse` term; `spot_mask` in `light.wgsl`).
+/// `spot_scale` is `scale.z / scale.xy`, and the pool's reach along an axis
+/// is exactly `tan(half angle) / spot_scale` — so 0.75 reaches a third
+/// further, and the axis with the smaller number is the long one.
+#[test]
+fn a_scaled_spots_pool_of_light_is_an_ellipse() {
+    if Ray::gpu().is_none() {
+        return;
+    }
+    let atlas = sky_atlas();
+    let scene = card(3.0, 2.0, None);
+    // The same 6° spot as the Blend test, on the axis. Its own X is the
+    // world's, so its Y lies along the world's Z — the image's vertical.
+    let shot = |right: [f32; 3], spot_scale: [f32; 2]| {
+        let cone = 6.0_f32.to_radians().cos();
+        let mut lights = [Light::default(); phiray::LIGHTS];
+        lights[0] = Light {
+            pos: [0.0, -2.0, 0.0],
+            kind: 2,
+            color: [600.0, 600.0, 600.0],
+            size: 0.0,
+            dir: [0.0, 1.0, 0.0],
+            cone,
+            blend: (1.0 - cone) * 0.2,
+            right,
+            spot_scale,
+            ..Light::default()
+        };
+        let cam = Camera { count: 1, lights, envmap: 0, env_cdf: 0, preview: [0; 4], env: [0.02, 0.02, 0.02, 1.0], ..camera() };
+        render(Mode::Preview, cam, &scene, &atlas).0
+    };
+    // Half the pool's brightest, measured on the frame itself rather than
+    // assumed: the lit run across the middle row and down the middle
+    // column is the pool's width and height in pixels.
+    let extent = |px: &[u8]| {
+        let peak = (0..W).map(|x| luma(px, x, W / 2)).fold(0.0, f32::max);
+        let lit = |v: f32| v > peak * 0.5;
+        (
+            (0..W).filter(|&x| lit(luma(px, x, W / 2))).count(),
+            (0..W).filter(|&y| lit(luma(px, W / 2, y))).count(),
+        )
+    };
+    let round = shot([1.0, 0.0, 0.0], [1.0, 1.0]);
+    let (rw, rh) = extent(&round);
+    assert!(rw > 2 && rw == rh, "an unscaled spot is round: {rw} x {rh}");
+    // `[1, 1]` is the ellipse term's own round case, so it has to give the
+    // same frame as a record with no axes and no scale at all — the guard
+    // in `spot_mask`, and batch 147's plain smoothstep. The two agree to
+    // the last level and no further: `inverseSqrt(1 + |xy|²/z²)` is `z`
+    // only up to rounding.
+    let apart = round.iter().zip(&shot([0.0; 3], [0.0; 2])).map(|(a, b)| a.abs_diff(*b)).max();
+    assert!(apart <= Some(1), "[1, 1] is the round case: {apart:?} levels apart");
+    // A third further along the squashed axis, to within a pixel of
+    // `rw / 0.75`, and the other axis untouched.
+    let far = (rw as f32 / 0.75).round() as usize;
+    let (tw, th) = extent(&shot([1.0, 0.0, 0.0], [1.0, 0.75]));
+    assert_eq!(tw, rw, "scaling Y leaves the width alone");
+    assert!(th.abs_diff(far) <= 1, "a spot scaled in Y reaches 1/0.75 as far in Y: {th}, not {far}");
+    let (ww, wh) = extent(&shot([1.0, 0.0, 0.0], [0.75, 1.0]));
+    assert_eq!(wh, rh, "and in X, the height alone");
+    assert!(ww.abs_diff(far) <= 1, "reaching as far in X: {ww}, not {far}");
+}
