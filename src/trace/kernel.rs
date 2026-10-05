@@ -409,7 +409,11 @@ pub struct Light {
     /// An area light's `Light.area_shape`: 0 square, 1 rectangle, 4 disk,
     /// 5 ellipse — a disk and an ellipse are rounded, the others not.
     pub shape: u32,
-    pub _pad: [u32; 3],
+    /// A spot's Blend as a width in cosine, `(1 − cone) × Light.spotblend`
+    /// (`eevee_light.cc`'s `spot_blend`): the cone fades over
+    /// `cone ..= cone + blend`, so 0 is a hard edge.
+    pub blend: f32,
+    pub _pad: [u32; 2],
 }
 
 /// `Light::shape` (`eLightAreaShape`).

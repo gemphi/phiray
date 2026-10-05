@@ -240,7 +240,7 @@ fn an_area_lights_penumbra_follows_its_own_shape() {
         right: [1.0, 0.0, 0.0],
         size_y,
         shape: phiray::AREA_RECT,
-        _pad: [0; 3],
+        ..Light::default()
     };
     let shot = |li: Light, blocked: bool| {
         let mut lights = [Light::default(); phiray::LIGHTS];
@@ -261,4 +261,43 @@ fn an_area_lights_penumbra_follows_its_own_shape() {
     let tall = between(&shot(strip(0.02, 1.2), true));
     assert!(wide > tall, "a strip across the scan softens it, one along it does not: {wide} vs {tall}");
     assert!(tall <= 1, "the narrow direction stays a step: {tall}");
+}
+
+/// A spot's Blend is how much of its cone fades: the kernels smoothstep
+/// from the cone's cosine to `cone + blend`, as EEVEE does
+/// (`eevee_light.cc`'s `spot_blend = (1 − spot_size) × spotblend`, then
+/// `light_spot_attenuation`). Blend 0 gives a hard-edged circle of light
+/// and a wide Blend a soft one, where before the file's value was ignored
+/// for Blender's default 0.15.
+#[test]
+fn a_spots_blend_fades_the_edge_of_its_cone() {
+    if Ray::gpu().is_none() {
+        return;
+    }
+    let atlas = sky_atlas();
+    let scene = card(3.0, 2.0, None);
+    // A spot on the axis, pointing at the card. The frame sees about a
+    // twentieth of the card, so the cone has to be narrow — 6° at four
+    // units puts the pool's edge well inside it.
+    let spot = |blend: f32| {
+        let cone = 6.0_f32.to_radians().cos();
+        Light { pos: [0.0, -2.0, 0.0], kind: 2, color: [600.0, 600.0, 600.0], size: 0.0, dir: [0.0, 1.0, 0.0], cone, blend: (1.0 - cone) * blend, ..Light::default() }
+    };
+    let shot = |blend: f32| {
+        let mut lights = [Light::default(); phiray::LIGHTS];
+        lights[0] = spot(blend);
+        let cam = Camera { count: 1, lights, envmap: 0, env_cdf: 0, preview: [0; 4], env: [0.02, 0.02, 0.02, 1.0], ..camera() };
+        render(Mode::Preview, cam, &scene, &atlas).0
+    };
+    // Along the middle row the pool is bright in the centre and dark
+    // outside; the edge's width is what Blend sets.
+    let row = |px: &[u8]| (0..W).map(|x| luma(px, x, W / 2)).collect::<Vec<f32>>();
+    let hard = row(&shot(0.0));
+    let (dark, bright) = (hard.iter().cloned().fold(f32::MAX, f32::min), hard.iter().cloned().fold(0.0, f32::max));
+    assert!(bright > dark + 60.0, "the spot lights a pool: {dark} ..= {bright}");
+    let (lo, hi) = (dark + 0.2 * (bright - dark), bright - 0.2 * (bright - dark));
+    let edge = |r: &[f32]| r.iter().filter(|&&v| v > lo && v < hi).count();
+    let (none, some, wide) = (edge(&hard), edge(&row(&shot(0.4))), edge(&row(&shot(1.0))));
+    assert!(none <= 2, "Blend 0 is a hard edge: {none} pixels across it");
+    assert!(some > none && wide > some, "the edge widens with Blend: {none} {some} {wide}");
 }

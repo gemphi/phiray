@@ -36,4 +36,4 @@ struct Camera {
     dof: vec4<f32>,
     lights: array<Light, 16>,
 }
-struct Light { pos: vec3<f32>, kind: u32, color: vec3<f32>, size: f32, dir: vec3<f32>, cone: f32, right: vec3<f32>, size_y: f32, shape: u32, pad0: u32, pad1: u32, pad2: u32 }
+struct Light { pos: vec3<f32>, kind: u32, color: vec3<f32>, size: f32, dir: vec3<f32>, cone: f32, right: vec3<f32>, size_y: f32, shape: u32, blend: f32, pad1: u32, pad2: u32 }
