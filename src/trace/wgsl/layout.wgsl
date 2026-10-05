@@ -27,9 +27,9 @@ const LEAF: u32 = 0x80000000u;
 // A top-tree leaf: its range is instance slots (`inst_order`), not faces.
 const INST: u32 = 0x40000000u;
 // Words per instance record (`Instance::words`).
-const INST_WORDS: u32 = 32u;
+const INST_WORDS: u32 = 40u;
 // Words per material record (`Mat`).
-const MAT_WORDS: u32 = 32u;
+const MAT_WORDS: u32 = 112u;
 const NO_MAT: u32 = 0xffffffffu;
 const NO_TEX: u32 = 0xffffffffu;
 const INF: f32 = 3.0e38;
@@ -52,7 +52,8 @@ fn mat_mix(m: u32) -> f32 { return tf(m + 31u); }
 
 // Instance `i`'s record: world rows 0..12, inverse rows 12..24, 24 the root
 // of its tree, 25..27 its faces, 27 its flags: bit 0 set when it sits at
-// the identity, bit 1 when it casts no shadow.
+// the identity, bit 1 when it casts no shadow; 28..31 its colour and hash,
+// 32..38 its bounding box (`procedural.wgsl`).
 fn inst_at(i: u32) -> u32 { return p.insts.x + i * INST_WORDS; }
 fn inst_row(w: u32) -> vec4<f32> { return vec4<f32>(tf(w), tf(w + 1u), tf(w + 2u), tf(w + 3u)); }
 // Top-tree slot `s` → instance id.

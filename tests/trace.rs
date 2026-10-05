@@ -143,23 +143,23 @@ fn many_file_lights_light_the_scene() {
 fn split_buffers_render_the_same() {
     use phiray::Scene;
     let Some(gpu) = Ray::gpu() else { return };
-    // A 4 × 4 grid seen from above: 32 faces, 25 shared vertices, ~15 nodes.
+    // A 5 × 5 grid seen from above: 50 faces, 36 shared vertices.
     let mut tris = Vec::new();
-    for (i, j) in (0..4).flat_map(|i| (0..4).map(move |j| (i as f32, j as f32))) {
+    for (i, j) in (0..5).flat_map(|i| (0..5).map(move |j| (i as f32, j as f32))) {
         let q = [[i, j, 0.0], [i + 1.0, j, 0.0], [i + 1.0, j + 1.0, 0.0], [i, j + 1.0, 0.0]];
         let c = if ((i + j) as u32).is_multiple_of(2) { [0.8, 0.3, 0.2, 1.0] } else { [0.2, 0.3, 0.8, 1.0] };
         tris.extend(quad(q, [0.0, 0.0, 1.0], c));
     }
     let cam = Camera {
-        right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], back: [0.0, 0.0, 1.0], pivot: [2.0, 2.0, 0.0],
+        right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], back: [0.0, 0.0, 1.0], pivot: [2.5, 2.5, 0.0],
         units: 1.0, scale: 0.2, aspect: 1.0, sun: [0.3, 0.2, 0.93], env: [0.3; 4], ..Default::default()
     };
     let render = |limit: u64, chunks: usize| {
         let scene = Scene::from_tris(&tris, &Atlas::default());
         let mut tr = Tracer::with_chunks(&gpu, scene, limit, chunks).expect("fits in the chunks");
         assert_eq!(tr.chunks(), chunks);
-        if limit == 416 {
-            assert_eq!(tr.split()[..3], [13, 26, 13], "nodes, faces, vertices each split");
+        if limit == 1088 {
+            assert_eq!(tr.split()[1..3], [50, 34], "the faces whole, the vertices split 34 to a binding");
         }
         let (mut px, mut done) = tr.render(&gpu, cam, 40, 40);
         while !done {
@@ -167,9 +167,10 @@ fn split_buffers_render_the_same() {
         }
         px
     };
-    // 416 bytes: faces (26 per binding), vertices (13) and nodes (13) span two bindings.
+    // 1088 bytes — over the data table's floor (1068): the 36 vertices (34
+    // per binding) span two bindings; the 50 faces fit one.
     let whole = render(1 << 20, 2);
-    assert_eq!(whole, render(416, 2));
+    assert_eq!(whole, render(1088, 2));
     assert!(whole.chunks(4).any(|p| p[0] > 100), "grid is visible");
     // Beyond twice the limit two bindings decline (the painter falls back) …
     let refused = |limit, chunks| Tracer::with_chunks(&gpu, Scene::from_tris(&tris, &Atlas::default()), limit, chunks).is_none();
@@ -177,10 +178,10 @@ fn split_buffers_render_the_same() {
     // … while four bindings (when the device has them) still fit, down to a quarter.
     if Tracer::chunks_for(&gpu) == 4 {
         assert_eq!(whole, render(1 << 20, 4));
-        // 396 bytes: the data table — the two materials (32 words each), the
-        // empty atlas's word and the one instance's record (33 words) — is
-        // the tightest binding.
-        assert_eq!(whole, render(396, 4));
-        assert!(refused(392, 4), "the data table does not fit");
+        // 1068 bytes: the data table — the two materials (112 words each),
+        // the empty atlas's word and the one instance's record (41 words) —
+        // is the tightest binding.
+        assert_eq!(whole, render(1068, 4));
+        assert!(refused(1064, 4), "the data table does not fit");
     }
 }

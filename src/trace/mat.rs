@@ -1,9 +1,11 @@
 //! Material table entry shared by many faces.
 
 use super::kernel::Tri;
+pub use super::proc::Proc;
 use bytemuck::{Pod, Zeroable};
 
-/// Surface inputs shared by many faces (32 words on the GPU).
+/// Surface inputs shared by many faces (112 words on the GPU: 32 and the
+/// two 40-word procedural slots).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct Mat {
@@ -34,6 +36,10 @@ pub struct Mat {
     /// both and lerps.
     pub second: u32,
     pub mix: f32,
+    /// The procedural slots: the first drives the base colour or the mix
+    /// weight, the second the normal through a Bump node.
+    pub color_proc: Proc,
+    pub bump_proc: Proc,
 }
 
 /// `Mat::second` of a material with one lobe.
@@ -48,9 +54,10 @@ impl Mat {
             sheen: t.sheen, sheen_rough: t.sheen_rough, sheen_tint: t.sheen_tint,
             coat: t.coat, coat_rough: t.coat_rough, aniso: t.aniso, aniso_rot: t.aniso_rot,
             second: t.second, mix: t.mix,
+            color_proc: t.color_proc, bump_proc: t.bump_proc,
         }
     }
-    pub(super) fn key(&self) -> [u32; 32] {
+    pub(super) fn key(&self) -> [u32; 112] {
         bytemuck::cast(*self)
     }
     pub(super) fn power(&self) -> f32 {

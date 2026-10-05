@@ -6,6 +6,7 @@ pub mod hash;
 pub mod srgb;
 pub mod ibl;
 pub mod instance;
+pub mod proc;
 mod kernel;
 mod lamps;
 mod mat;
@@ -30,6 +31,7 @@ enum BTail {
 pub use shader::{Fx, Preview, Preview4, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
 pub use instance::Instance;
 pub use mat::Mat;
+pub use proc::{PROC_NORMALIZE, Proc};
 pub use srgb::Srgb;
 pub use scene::Scene;
 

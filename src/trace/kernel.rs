@@ -57,6 +57,9 @@ pub struct Tri {
     /// in the scene and the weight it takes; `NO_MAT`, 0 for one lobe.
     pub second: u32,
     pub mix: f32,
+    /// Procedural textures (`Mat::color_proc`, `bump_proc`).
+    pub color_proc: super::mat::Proc,
+    pub bump_proc: super::mat::Proc,
 }
 
 /// `Tri::tex` value for untextured triangles.
@@ -137,6 +140,14 @@ impl Tri {
     /// at weight `mix` (0 all this, 1 all the other), the UVs shared.
     pub fn with_second(mut self, second: u32, mix: f32) -> Self {
         (self.second, self.mix) = (second, mix.clamp(0.0, 1.0));
+        self
+    }
+
+    /// A procedural texture on the base colour or the mix weight
+    /// (`Proc::target`), and one on the normal through a Bump node.
+    pub fn with_procs(mut self, color: Option<super::mat::Proc>, bump: Option<super::mat::Proc>) -> Self {
+        self.color_proc = color.unwrap_or_default();
+        self.bump_proc = bump.unwrap_or_default();
         self
     }
 

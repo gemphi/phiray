@@ -117,25 +117,32 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // (`svm_node_mix_closure` weights the closures and the sampler picks
         // one by weight, which is unbiased); the other hits of the pixel's
         // samples take the other.
-        var m = mat_at(h.tri);
-        let other = mat_second(m);
-        if (other != NO_MAT && rnd(&seed) < mat_mix(m)) { m = mat_word(other); }
-        let t = tri_with(h.tri, m);
+        // The face's own material first: its geometry, the point in the
+        // object's space and the UV, which a procedural mix weight reads.
+        let own = mat_at(h.tri);
+        let geo = tri_with(h.tri, own);
         let w = 1.0 - h.u - h.v;
+        let bary = vec3<f32>(w, h.u, h.v);
+        let uv = vec2<f32>(dot(geo.us, bary), dot(geo.vs, bary));
+        let hit = o + d * h.t;
+        let inst = inst_at(face(h.tri).w >> 16u);
+        let pobj = object_point(inst, hit);
+        var m = own;
+        let other = mat_second(m);
+        if (other != NO_MAT && rnd(&seed) < mix_weight(m, pobj, uv, inst)) { m = mat_word(other); }
+        let t = tri_with(h.tri, m);
         let ng0 = normalize(cross(t.b - t.a, t.c - t.a));
         let front = dot(ng0, d) < 0.0;
         let ng = select(-ng0, ng0, front);
         var n = t.na * w + t.nb * h.u + t.nc * h.v;
         n = select(ng, normalize(n) * select(-1.0, 1.0, front), dot(n, n) > 1e-12);
-        if (t.nmap != NO_TEX) { n = mapped_normal(t, n, vec3<f32>(w, h.u, h.v)); }
+        if (t.nmap != NO_TEX) { n = mapped_normal(t, n, bary); }
+        n = proc_normal(m, n, pobj, uv, inst, pix * h.t);
         if (dot(n, -d) < 0.0) { n = ng; }
-        let hit = o + d * h.t;
         let off = ng * (p.eps + h.t * 1e-5);
         let pos = hit + off;
-        var base = max(t.color.rgb, vec3<f32>(0.0));
+        var base = proc_base(m, max(t.color.rgb, vec3<f32>(0.0)), pobj, uv, inst);
         var alpha = t.color.a;
-        let bary = vec3<f32>(w, h.u, h.v);
-        let uv = vec2<f32>(dot(t.us, bary), dot(t.vs, bary));
         if (t.tex != NO_TEX) {
             let tc = sample_tex(t.tex, uv);
             base *= tc.rgb;

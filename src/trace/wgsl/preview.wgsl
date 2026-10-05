@@ -87,26 +87,29 @@ fn env_brdf(f0: vec3<f32>, rough: f32, nv: f32) -> vec3<f32> {
     return f0 * ab.x + vec3<f32>(ab.y);
 }
 
-// Direct light from the lamps, one shadow ray each — every lamp, no pick
-// among them (`lights` draws four at random; nothing here is drawn).
+// Direct light from the lamps, each shadowed over its shape
+// (`shadow.wgsl`: EEVEE aims its shadow ray at a point on the light, so a
+// Radius or a Sun Angle gives a penumbra) — every lamp, no pick among
+// them (`lights` draws four at random; nothing here is drawn).
 fn preview_lamps(s: Surf) -> vec3<f32> {
     var c = vec3<f32>(0.0);
     if (p.count == 0u) {
         // The environment is the light when there is one; the rig stands in
         // for a scene with no light of any kind.
         if (p.envmap != 0u) { return c; }
-        c += brdf(s, p.sun, vec3<f32>(2.0)) * visible(s.pos, p.sun, INF);
+        // The rig's key is a 0.06 rad cone, as the path tracer takes it.
+        c += brdf(s, p.sun, vec3<f32>(2.0)) * rig_visible(s.pos, p.sun, 0.06);
         let fill = normalize(-p.right * 0.8 + p.up * 0.2 + p.back * 0.6);
         c += brdf(s, fill, vec3<f32>(0.45));
         let rim = normalize(p.up * 0.6 - p.back * 0.8 + p.right * 0.2);
-        c += brdf(s, rim, vec3<f32>(0.9)) * visible(s.pos, rim, INF);
+        c += brdf(s, rim, vec3<f32>(0.9)) * rig_visible(s.pos, rim, 0.06);
         return c;
     }
     for (var k = 0u; k < min(p.count, 16u); k++) {
         let li = p.lights[k];
         if (li.kind == 0u) {
             let l = normalize(-li.dir);
-            c += brdf(s, l, li.color) * visible(s.pos, l, INF);
+            c += brdf(s, l, li.color) * lamp_visible(s.pos, li, l, INF);
             continue;
         }
         let to = li.pos - s.pos;
@@ -119,7 +122,7 @@ fn preview_lamps(s: Surf) -> vec3<f32> {
             e *= max(dot(-l, li.dir), 0.0) * 2.0;
         }
         if (max(e.r, max(e.g, e.b)) < 1e-5) { continue; }
-        c += brdf(s, l, e) * visible(s.pos, l, sqrt(d2) * 0.999);
+        c += brdf(s, l, e) * lamp_visible(s.pos, li, l, sqrt(d2));
     }
     return c;
 }
@@ -137,7 +140,10 @@ fn preview_surface(h: Hit, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, first:
     let other = mat_second(m);
     let a = preview_lobe(h, m, o, d, foot, i, first);
     if (other == NO_MAT) { return a; }
-    let w = mat_mix(m);
+    let geo = tri_with(h.tri, m);
+    let bary = vec3<f32>(1.0 - h.u - h.v, h.u, h.v);
+    let inst = inst_at(face(h.tri).w >> 16u);
+    let w = mix_weight(m, object_point(inst, o + d * h.t), vec2<f32>(dot(geo.us, bary), dot(geo.vs, bary)), inst);
     let b = preview_lobe(h, mat_word(other), o, d, foot, i, false);
     let heavy = w > 0.5;
     return Layer(mix(a.rgb, b.rgb, w), mix(a.alpha, b.alpha, w), mix(a.thr, b.thr, w), select(a.o, b.o, heavy), select(a.d, b.d, heavy), a.through || b.through);
@@ -155,12 +161,15 @@ fn preview_lobe(h: Hit, m: u32, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, f
     n = select(ng, normalize(n) * select(-1.0, 1.0, front), dot(n, n) > 1e-12);
     let cos = max(dot(ng, -d), 0.0);
     if (t.nmap != NO_TEX) { n = mapped_normal_lod(t, n, bary, mip_level(t, t.nmap, foot, cos)); }
-    if (dot(n, -d) < 0.0) { n = ng; }
     let hit = o + d * h.t;
+    let uv = vec2<f32>(dot(t.us, bary), dot(t.vs, bary));
+    let inst = inst_at(face(h.tri).w >> 16u);
+    let pobj = object_point(inst, hit);
+    n = proc_normal(m, n, pobj, uv, inst, foot);
+    if (dot(n, -d) < 0.0) { n = ng; }
     let off = ng * (p.eps + h.t * 1e-5);
     let pos = hit + off;
-    let uv = vec2<f32>(dot(t.us, bary), dot(t.vs, bary));
-    var base = max(t.color.rgb, vec3<f32>(0.0));
+    var base = proc_base(m, max(t.color.rgb, vec3<f32>(0.0)), pobj, uv, inst);
     var alpha = t.color.a;
     if (t.tex != NO_TEX) {
         let tc = sample_tex_lod(t.tex, uv, mip_level(t, t.tex, foot, cos));

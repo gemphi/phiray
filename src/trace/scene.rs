@@ -54,7 +54,7 @@ pub struct Scene {
     /// (`add`, `push`) has one, at the identity.
     pub insts: Vec<Instance>,
     verts: HashMap<[u32; 7], u32>,
-    mat_ids: HashMap<[u32; 32], u32>,
+    mat_ids: HashMap<[u32; 112], u32>,
 }
 
 impl Scene {
@@ -125,6 +125,19 @@ impl Scene {
         if let Some(last) = self.insts.last_mut() {
             last.face_hi = self.faces.len() as u32;
             last.vert_hi = self.pos.len() as u32;
+            // The bounding box of its vertices, for Generated coordinates.
+            let verts = &self.pos[last.vert_lo as usize..last.vert_hi as usize];
+            if !verts.is_empty() {
+                let mut lo = [f32::INFINITY; 3];
+                let mut hi = [f32::NEG_INFINITY; 3];
+                for v in verts {
+                    for k in 0..3 {
+                        lo[k] = lo[k].min(v[k]);
+                        hi[k] = hi[k].max(v[k]);
+                    }
+                }
+                last.bounds = [lo, hi];
+            }
         }
     }
 
@@ -221,7 +234,7 @@ impl Scene {
 
     /// Largest single buffer in bytes.
     pub fn biggest(&self) -> u64 {
-        [self.pos.len() * 32, self.faces.len() * 16, self.atlas.words().len() * 4, self.mats.len() * 128 + 64]
+        [self.pos.len() * 32, self.faces.len() * 16, self.atlas.words().len() * 4, self.mats.len() * 448 + 64]
             .into_iter()
             .max()
             .unwrap_or(0) as u64

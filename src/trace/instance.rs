@@ -13,7 +13,7 @@
 use crate::bvh::Aabb;
 
 /// How many words one instance takes in the data table (`inst_word`).
-pub const INSTANCE_WORDS: usize = 32;
+pub const INSTANCE_WORDS: usize = 40;
 /// Instances a scene may hold: the face word keeps 16 bits for the id.
 pub const MAX_INSTANCES: usize = 1 << 16;
 
@@ -38,13 +38,16 @@ pub struct Instance {
     /// Shadow (`OB_DRAW_NO_SHADOW_CAST`) in Solid, Cycles' Ray Visibility ▸
     /// Shadow (`OB_HIDE_SHADOW`) in Rendered. Casts until told.
     pub casts_shadow: bool,
+    /// The object's bounding box in its own space, `[min, max]`: what
+    /// Generated texture coordinates normalize by (`ATTR_STD_GENERATED`).
+    pub bounds: [[f32; 3]; 2],
 }
 
 pub const IDENTITY: [[f32; 4]; 4] = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
 
 impl Instance {
     pub fn at(world: [[f32; 4]; 4], face_lo: u32, vert_lo: u32) -> Self {
-        Self { world, face_lo, face_hi: face_lo, vert_lo, vert_hi: vert_lo, color: [1.0; 3], hash: 0, casts_shadow: true }
+        Self { world, face_lo, face_hi: face_lo, vert_lo, vert_hi: vert_lo, color: [1.0; 3], hash: 0, casts_shadow: true, bounds: [[0.0; 3], [1.0; 3]] }
     }
 
     /// The object's colour and the hash of its id name, for Solid's Color
@@ -132,7 +135,30 @@ impl Instance {
             w[28 + k] = self.color[k].to_bits();
         }
         w[31] = self.hash;
+        // 32..35 the texture space's corner, 35..38 its size (object space).
+        let (lo, size) = self.texspace();
+        for k in 0..3 {
+            w[32 + k] = lo[k].to_bits();
+            w[35 + k] = size[k].to_bits();
+        }
         w
+    }
+
+    /// The object's texture space (`BKE_mesh_texspace_calc`), the corner
+    /// and size that Generated coordinates divide by: the bounding box —
+    /// but an axis the box is flat on takes a half-extent of 1 about its
+    /// centre, so a plane's Generated coordinate across it is a half, not
+    /// the float noise of the hit divided by nothing.
+    pub fn texspace(&self) -> ([f32; 3], [f32; 3]) {
+        let (mut lo, mut size) = ([0.0; 3], [0.0; 3]);
+        for k in 0..3 {
+            let half = 0.5 * (self.bounds[1][k] - self.bounds[0][k]);
+            let centre = 0.5 * (self.bounds[1][k] + self.bounds[0][k]);
+            let half = if half == 0.0 { 1.0 } else { half.max(0.00001) };
+            lo[k] = centre - half;
+            size[k] = 2.0 * half;
+        }
+        (lo, size)
     }
 }
 
@@ -163,5 +189,18 @@ mod tests {
         let mut shadowless = Instance::at(IDENTITY, 0, 0);
         shadowless.casts_shadow = false;
         assert_eq!(shadowless.words(0)[27], 0b11, "the flags share the word");
+    }
+
+    /// A wall on the XZ plane: its texture space spans the box on X and Z,
+    /// and two units about y = 0 where the box is flat, so a hit's Generated
+    /// coordinate there is a half.
+    #[test]
+    fn a_flat_axis_takes_a_half_extent_of_one() {
+        let mut wall = Instance::at(IDENTITY, 0, 0);
+        wall.bounds = [[-9.0, 0.0, -9.0], [9.0, 0.0, 12.0]];
+        let (lo, size) = wall.texspace();
+        assert_eq!((lo, size), ([-9.0, -1.0, -9.0], [18.0, 2.0, 21.0]));
+        let w = wall.words(0);
+        assert_eq!((f32::from_bits(w[33]), f32::from_bits(w[36])), (-1.0, 2.0));
     }
 }

@@ -223,9 +223,10 @@ mod tests {
         // The world spans both cubes; the instance table names both roots.
         assert!(trees.extent() > 10.0);
         let words = trees.inst_words(&s.insts);
+        let w = super::super::instance::INSTANCE_WORDS;
         assert_eq!(words[24], roots[0]);
-        assert_eq!(words[32 + 24], roots[1]);
-        assert_eq!(&words[64..66], &trees.inst_order[..]);
+        assert_eq!(words[w + 24], roots[1]);
+        assert_eq!(&words[2 * w..2 * w + 2], &trees.inst_order[..]);
     }
 
     #[test]

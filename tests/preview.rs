@@ -160,25 +160,56 @@ fn a_distant_checker_reads_as_grey_through_its_mip_levels() {
 }
 
 #[test]
-fn a_lamp_casts_a_hard_shadow() {
+fn a_lamp_casts_a_shadow_as_soft_as_its_radius() {
     if Ray::gpu().is_none() {
         return;
     }
     let atlas = sky_atlas();
     let mut scene = card(3.0, 2.0, None);
-    // A small card between a lamp off to the right and the big one: its
-    // shadow falls on the big card to the left of it, where the camera sees
-    // the big card past the small one.
+    // A small card between a lamp just off the axis and the big one: its
+    // shadow falls on the big card to the left of it, and the camera sees
+    // that shadow's outer edge past the small card's silhouette.
     scene.extend(card(0.3, 1.0, None));
-    let mut lights = [Light::default(); phiray::LIGHTS];
-    lights[0] = Light { pos: [1.5, -2.0, 0.0], kind: 1, color: [800.0, 800.0, 800.0], size: 0.1, dir: [0.0, 1.0, 0.0], cone: 0.0 };
-    let cam = Camera { count: 1, lights, envmap: 0, env_cdf: 0, preview: [0; 4], env: [0.05, 0.05, 0.05, 1.0], ..camera() };
-    let (px, _) = render(Mode::Preview, cam, &scene, &atlas);
-    let lit = luma(&px, W / 2 + 16, W / 2);
-    let shaded = luma(&px, W / 2 - 16, W / 2);
-    // Without the blocker the same two spots are lit alike (the right a
-    // little more, nearer the lamp).
-    let open = render(Mode::Preview, cam, &card(3.0, 2.0, None), &atlas).0;
-    assert!((luma(&open, W / 2 - 16, W / 2) - luma(&open, W / 2 + 16, W / 2)).abs() < 40.0);
-    assert!(lit > shaded + 40.0, "lit {lit} shaded {shaded}");
+    let lit_by = |li: Light, blocked: bool| {
+        let mut lights = [Light::default(); phiray::LIGHTS];
+        lights[0] = li;
+        let cam = Camera { count: 1, lights, envmap: 0, env_cdf: 0, preview: [0; 4], env: [0.05, 0.05, 0.05, 1.0], ..camera() };
+        let geo: Vec<Tri> = if blocked { scene.clone() } else { card(3.0, 2.0, None) };
+        render(Mode::Preview, cam, &geo, &atlas).0
+    };
+    let lamp = |size: f32| Light { pos: [0.6, -2.0, 0.0], kind: 1, color: [800.0, 800.0, 800.0], size, dir: [0.0, 1.0, 0.0], cone: 0.0 };
+    let shot = |size: f32, blocked: bool| lit_by(lamp(size), blocked);
+    // The shadow lies to the left of the small card's silhouette; the row
+    // through the middle of the frame crosses it.
+    const EDGE: u32 = 12;
+    let band = |px: &[u8]| (0..EDGE).map(|x| luma(px, x, W / 2)).collect::<Vec<f32>>();
+
+    let hard = shot(0.0, true);
+    let open = band(&shot(0.0, false));
+    let umbra = band(&hard).into_iter().fold(f32::MAX, f32::min);
+    assert!(open[8] > umbra + 80.0, "the blocker shadows the row: open {} umbra {umbra}", open[8]);
+
+    // The penumbra: pixels along the shadow's edge that are neither the
+    // umbra nor the open light. A lamp the size of a point has none — its
+    // edge steps from one to the other, as EEVEE's does with Shadow Soft
+    // Size at 0 — and the wider the lamp, the more of them, because the
+    // shadow ray is aimed over its shape (`shadow.wgsl`).
+    let lit = open[0];
+    let (lo, hi) = (umbra + 0.15 * (lit - umbra), lit - 0.15 * (lit - umbra));
+    let between = |px: &[u8]| band(px).into_iter().filter(|&v| v > lo && v < hi).count();
+    let (none, some, more) = (between(&hard), between(&shot(0.3, true)), between(&shot(0.6, true)));
+    assert_eq!(none, 0, "a point-sized lamp steps from lit to shaded");
+    assert!(some >= 2 && more > some, "the penumbra widens with the radius: {none} {some} {more}");
+
+    // A Sun's shape is an Angle, and its ray goes inside that cone
+    // (`shadow_ray_generate_directional`), so its shadow softens the same
+    // way — at the angle, not at a radius.
+    let sun = |size: f32| Light { kind: 0, color: [2.0, 2.0, 2.0], size, dir: [-0.3, 1.0, 0.0], ..Light::default() };
+    let sharp = lit_by(sun(0.0), true);
+    let sun_open = band(&lit_by(sun(0.0), false));
+    let sun_umbra = band(&sharp).into_iter().fold(f32::MAX, f32::min);
+    let (slo, shi) = (sun_umbra + 0.15 * (sun_open[0] - sun_umbra), sun_open[0] - 0.15 * (sun_open[0] - sun_umbra));
+    let sun_between = |px: &[u8]| band(px).into_iter().filter(|&v| v > slo && v < shi).count();
+    assert!(sun_open[8] > sun_umbra + 40.0, "the blocker shadows the row under a sun too: {} {sun_umbra}", sun_open[8]);
+    assert!(sun_between(&lit_by(sun(0.2), true)) > sun_between(&sharp), "a sun's angle softens its shadow");
 }
