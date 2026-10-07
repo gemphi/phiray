@@ -115,11 +115,15 @@ fn preview_lamps(s: Surf) -> vec3<f32> {
         let to = li.pos - s.pos;
         let d2 = max(dot(to, to), 1e-6);
         let l = to / sqrt(d2);
-        var e = li.color / (4.0 * PI * PI * d2);
+        // `P / (4π d²)`, the irradiance; the BSDF supplies the 1/π.
+        var e = li.color / (4.0 * PI * d2);
         if (li.kind == 2u) {
             e *= spot_mask(li, l);
         } else if (li.kind == 3u) {
-            e *= max(dot(-l, li.dir), 0.0) * 2.0;
+            // `P cos / (π (d² + A/π))`, as `light.wgsl`'s `direct` (§55, §57).
+            let shape = li.shape == AREA_DISK || li.shape == AREA_ELLIPSE;
+            let a = max(li.size * li.size_y, 0.0) * select(1.0, 0.25 * PI, shape);
+            e *= max(dot(-l, li.dir), 0.0) * 4.0 * d2 / (d2 + a / PI);
         }
         if (max(e.r, max(e.g, e.b)) < 1e-5) { continue; }
         c += brdf(s, l, e) * lamp_visible(s.pos, li, l, sqrt(d2));
@@ -237,6 +241,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let pix = 1.0 / (p.scale * p.units * frame_size().x);
     let sky = sky_at(i);
+    // The selection outline's prepass: nothing until the first surface
+    // says otherwise, so every return below leaves it right.
+    outline_store(i, 0u);
     let o0 = o;
     let d0 = d;
     var first_t = INF;
@@ -272,7 +279,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             break;
         }
-        if (layer == 0u) { first_t = h.t; }
+        if (layer == 0u) {
+            first_t = h.t;
+            outline_store(i, (face(h.tri).w >> 16u) + 1u);
+        }
         let lay = preview_surface(h, o, d, footprint(first_t), i, layer == 0u);
         col += thr * lay.alpha * lay.rgb;
         thr *= lay.thr;

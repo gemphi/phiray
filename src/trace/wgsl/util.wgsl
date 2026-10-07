@@ -235,6 +235,16 @@ fn taa_sample(i: u32, disp: vec3<f32>) {
     px[a + 2u] = bitcast<u32>(disp.z);
 }
 
+// The selection outline's prepass (`overlay_outline_prepass_vert.glsl`):
+// the instance under pixel `i` **plus one** — 0 where the ray met nothing,
+// as Blender's id 0 is the background — in words 25n..26n. `outline.wgsl`
+// turns it into Blender's packed id with the class the host uploaded for
+// that instance, and draws the line. Written whatever the overlay asks:
+// one word a pixel, where branching on it would cost the same.
+fn outline_store(i: u32, id: u32) {
+    px[25u * p.n + i] = id;
+}
+
 // A point in the unit disk from two uniform numbers — the aperture's
 // sample (`lens_offset`) and the GGX visible-normal sample's
 // (`ggx_sample_vndf`), so it lives with the other primitives every kernel

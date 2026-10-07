@@ -4,8 +4,8 @@ use super::kernel::Tri;
 pub use super::proc::Proc;
 use bytemuck::{Pod, Zeroable};
 
-/// Surface inputs shared by many faces (112 words on the GPU: 32 and the
-/// two 40-word procedural slots).
+/// Surface inputs shared by many faces (120 words on the GPU: 32 and the
+/// two 44-word procedural slots).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct Mat {
@@ -57,7 +57,7 @@ impl Mat {
             color_proc: t.color_proc, bump_proc: t.bump_proc,
         }
     }
-    pub(super) fn key(&self) -> [u32; 112] {
+    pub(super) fn key(&self) -> [u32; 120] {
         bytemuck::cast(*self)
     }
     pub(super) fn power(&self) -> f32 {

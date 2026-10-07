@@ -336,6 +336,21 @@ pub struct Camera {
     /// nothing drawn)]`. The bokeh's shape is `blades`, `blade_spin` and
     /// `aperture_ratio`, the camera's own.
     pub dof: [f32; 4],
+    /// The selection outline (`outline.wgsl`, Overlays ▸ Objects ▸ Outline
+    /// Selected): `[on, thick, occluded alpha, pixel size]`. `thick`
+    /// checks the neighbours two pixels out as well as one
+    /// (`do_thick_outlines`: `U.pixelsize > 1` or an outline wider than
+    /// 2); the occluded alpha is `alpha_occlu`, which nothing reads yet
+    /// (see `outline.wgsl`); the pixel size is `U.pixelsize`, 0 reading as
+    /// 1. `on` 0 leaves the pass out altogether.
+    pub outline_fx: [f32; 4],
+    /// `theme.colors.object_select`, display space — a selected object's
+    /// outline.
+    pub outline_pick: [f32; 4],
+    /// `theme.colors.active_object` — the active object's.
+    pub outline_active: [f32; 4],
+    /// `theme.colors.transform` — an object being moved.
+    pub outline_move: [f32; 4],
     pub lights: [Light; LIGHTS],
 }
 

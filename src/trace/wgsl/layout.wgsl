@@ -29,7 +29,7 @@ const INST: u32 = 0x40000000u;
 // Words per instance record (`Instance::words`).
 const INST_WORDS: u32 = 40u;
 // Words per material record (`Mat`).
-const MAT_WORDS: u32 = 112u;
+const MAT_WORDS: u32 = 120u;
 const NO_MAT: u32 = 0xffffffffu;
 const NO_TEX: u32 = 0xffffffffu;
 const INF: f32 = 3.0e38;

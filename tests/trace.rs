@@ -158,8 +158,8 @@ fn split_buffers_render_the_same() {
         let scene = Scene::from_tris(&tris, &Atlas::default());
         let mut tr = Tracer::with_chunks(&gpu, scene, limit, chunks).expect("fits in the chunks");
         assert_eq!(tr.chunks(), chunks);
-        if limit == 1088 {
-            assert_eq!(tr.split()[1..3], [50, 34], "the faces whole, the vertices split 34 to a binding");
+        if limit == 1148 {
+            assert_eq!(tr.split()[1..3], [50, 35], "the faces whole, the vertices split 35 to a binding");
         }
         let (mut px, mut done) = tr.render(&gpu, cam, 40, 40);
         while !done {
@@ -167,10 +167,11 @@ fn split_buffers_render_the_same() {
         }
         px
     };
-    // 1088 bytes — over the data table's floor (1068): the 36 vertices (34
-    // per binding) span two bindings; the 50 faces fit one.
+    // 1148 bytes — over the data table's floor (1132) and under the 1152
+    // the 36 vertices want: they span two bindings (35 apiece, at 32 bytes
+    // a vertex) while the 50 faces fit one.
     let whole = render(1 << 20, 2);
-    assert_eq!(whole, render(1088, 2));
+    assert_eq!(whole, render(1148, 2));
     assert!(whole.chunks(4).any(|p| p[0] > 100), "grid is visible");
     // Beyond twice the limit two bindings decline (the painter falls back) …
     let refused = |limit, chunks| Tracer::with_chunks(&gpu, Scene::from_tris(&tris, &Atlas::default()), limit, chunks).is_none();
@@ -178,10 +179,11 @@ fn split_buffers_render_the_same() {
     // … while four bindings (when the device has them) still fit, down to a quarter.
     if Tracer::chunks_for(&gpu) == 4 {
         assert_eq!(whole, render(1 << 20, 4));
-        // 1068 bytes: the data table — the two materials (112 words each),
-        // the empty atlas's word and the one instance's record (41 words) —
-        // is the tightest binding.
-        assert_eq!(whole, render(1068, 4));
-        assert!(refused(1064, 4), "the data table does not fit");
+        // 1132 bytes: the data table — the two materials (120 words each,
+        // 112 before the Math node's four words a slot, batch 160), the
+        // atlas's and the table's own header words and the one instance's
+        // record (41 words) — is the tightest binding.
+        assert_eq!(whole, render(1132, 4));
+        assert!(refused(1128, 4), "the data table does not fit");
     }
 }

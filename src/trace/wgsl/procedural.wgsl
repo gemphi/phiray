@@ -2,7 +2,8 @@
 // `voronoi.wgsl`, `pattern.wgsl`; `displace.h`'s Bump here): a material
 // carries two procedural slots (`Mat::color_proc`, `bump_proc`; 40 words
 // each, `PROC_WORDS`) — a texture node, its coordinates (Generated, Object
-// or UV through a Mapping node's location and scale), an optional colour
+// or UV through a Mapping node, whole: location, rotation, scale and
+// type), an optional colour
 // ramp baked to a 256 × 1 atlas image, and what it drives: the base colour
 // or the mix weight for the first slot, the normal through a Bump node
 // for the second.
@@ -10,15 +11,19 @@
 // The slot's words (`Proc` in `mat.rs`): 0 kind, 1 coords, 2 ramp,
 // 3 target, 4–6 location, 7–9 scale, 10 Scale, 11 Detail, 12 Roughness,
 // 13 Lacunarity, 14 Distortion / Randomness, 15 Strength, 16 variant
-// (noise type, Voronoi feature, gradient type, wave type), 17 direction
+// (noise type, Voronoi feature, gradient type, wave type, White Noise
+// dimensions, Gabor type), 17 direction
 // (Voronoi metric, bands direction, brick offset frequency), 18 rings
 // (rings direction, brick squash frequency, magic depth), 19 profile,
 // 20 Offset (brick offset amount, wave Detail Scale), 21 Gain (brick
 // squash amount, wave Detail Roughness), 22 Smoothness (wave Phase
 // Offset, brick Mortar Size), 23 Exponent (brick Mortar Smooth), 24 Bias,
-// 25 Brick Width, 26 Row Height, 28–30 Color1, 31–33 Color2, 34–36 Mortar.
+// 25 Brick Width, 26 Row Height, 27 Mapping type, 28–30 Color1,
+// 31–33 Color2, 34–36 Mortar, 37–39 Mapping Rotation, 40 the Math
+// node's operation (`MATH_NONE` for none), 41–42 its second and third
+// Value sockets, 43 its Clamp.
 
-const PROC_WORDS: u32 = 40u;
+const PROC_WORDS: u32 = 44u;
 // `Proc::kind`'s low byte.
 const PROC_NONE: u32 = 0u;
 const PROC_NOISE_FAC: u32 = 1u;
@@ -34,6 +39,11 @@ const PROC_GRADIENT: u32 = 10u;
 const PROC_MAGIC_FAC: u32 = 11u;
 const PROC_MAGIC_COLOR: u32 = 12u;
 const PROC_WAVE: u32 = 13u;
+const PROC_WHITE_NOISE_FAC: u32 = 14u;
+const PROC_WHITE_NOISE_COLOR: u32 = 15u;
+const PROC_GABOR_VALUE: u32 = 16u;
+const PROC_GABOR_PHASE: u32 = 17u;
+const PROC_GABOR_INTENSITY: u32 = 18u;
 // `Proc::kind`'s flag: Normalize on (a Voronoi, or a Noise whose type
 // has one).
 const PROC_NORMALIZE: u32 = 256u;
@@ -43,11 +53,38 @@ const PROC_MIX: u32 = 2u;
 // Blender's Bump node Filter Width default.
 const BUMP_FILTER_WIDTH: f32 = 0.1;
 
-// ---- The slot (`Mat::color_proc` at `m + 32`, `bump_proc` at `m + 72`) ----
+// ---- The slot (`Mat::color_proc` at `m + 32`, `bump_proc` at `m + 76`) ----
 
 fn proc_kind(w: u32) -> u32 { return data[w] & 0xffu; }
 
 fn proc_color(w: u32) -> vec3<f32> { return vec3<f32>(tf(w), tf(w + 1u), tf(w + 2u)); }
+
+// Blender's Euler XYZ as Cycles builds it (`euler_to_transform` in
+// `util/transform.h`), whose rows are that function's `t.x`, `t.y`, `t.z`
+// — so these are its columns, since WGSL takes a matrix column by column.
+// `rot * v` is then `transform_direction` and `transpose(rot) * v` is
+// `transform_direction_transposed`, which is how `svm_mapping` spends it.
+fn euler_xyz(r: vec3<f32>) -> mat3x3<f32> {
+    let c = cos(r);
+    let s = sin(r);
+    return mat3x3<f32>(
+        vec3<f32>(c.y * c.z, c.y * s.z, -s.y),
+        vec3<f32>(s.y * s.x * c.z - c.x * s.z, s.y * s.x * s.z + c.x * c.z, c.y * s.x),
+        vec3<f32>(s.y * c.x * c.z + s.x * s.z, s.y * c.x * s.z - s.x * c.z, c.y * c.x),
+    );
+}
+
+// Cycles' `safe_divide`: zero where the divisor is.
+fn safe_div(a: vec3<f32>, b: vec3<f32>) -> vec3<f32> {
+    let ok = abs(b) > vec3<f32>(1e-12);
+    return select(vec3<f32>(0.0), a / select(vec3<f32>(1.0), b, ok), ok);
+}
+
+// Cycles' `safe_normalize`: the vector itself when it has no length.
+fn normalize_or_zero(v: vec3<f32>) -> vec3<f32> {
+    let l = length(v);
+    return select(v, v / l, l > 1e-20);
+}
 
 // The texture's coordinate for a hit: the object-space point `pobj`
 // (Generated normalizes it by the object's bounding box, `inst_at + 32`,
@@ -64,7 +101,18 @@ fn proc_coord(w: u32, pobj: vec3<f32>, uv: vec2<f32>, inst: u32) -> vec3<f32> {
     }
     let location = vec3<f32>(tf(w + 4u), tf(w + 5u), tf(w + 6u));
     let scale = vec3<f32>(tf(w + 7u), tf(w + 8u), tf(w + 9u));
-    return co * scale + location;
+    let rot = euler_xyz(vec3<f32>(tf(w + 37u), tf(w + 38u), tf(w + 39u)));
+    switch data[w + 27u] {
+        // Texture: the inverse of Point, which is how a texture's own
+        // transform reads — move, unrotate, then unscale.
+        case 1u: { return safe_div(transpose(rot) * (co - location), scale); }
+        // Vector: a direction, so no offset.
+        case 2u: { return rot * (co * scale); }
+        // Normal: scaled the other way and renormalized.
+        case 3u: { return normalize_or_zero(rot * safe_div(co, scale)); }
+        // Point, the default.
+        default: { return rot * (co * scale) + location; }
+    }
 }
 
 // The texture at `co`: `.w` its scalar output, `.rgb` its colour output.
@@ -102,6 +150,18 @@ fn proc_tex(w: u32, co0: vec3<f32>) -> vec4<f32> {
             let f = wave_fac(variant, data[w + 17u], data[w + 18u], data[w + 19u], co, distortion, detail, tf(w + 20u), tf(w + 21u), tf(w + 22u));
             return vec4<f32>(vec3<f32>(f), f);
         }
+        case PROC_WHITE_NOISE_FAC, PROC_WHITE_NOISE_COLOR: {
+            // The White Noise node has no Scale: the coordinate is hashed
+            // as it arrives, W in the Offset word.
+            return white_noise_texture(co0, tf(w + 20u), variant);
+        }
+        case PROC_GABOR_VALUE, PROC_GABOR_PHASE, PROC_GABOR_INTENSITY: {
+            // Frequency, Anisotropy and Orientation 2D ride in the Detail,
+            // Roughness and Lacunarity words; Orientation 3D in Color1.
+            let g = gabor_texture(co, variant, detail, roughness, lacunarity, proc_color(w + 28u));
+            let f = select(select(g.x, g.y, kind == PROC_GABOR_PHASE), g.z, kind == PROC_GABOR_INTENSITY);
+            return vec4<f32>(vec3<f32>(f), f);
+        }
         default: { return vec4<f32>(0.5, 0.5, 0.5, 0.5); }
     }
 }
@@ -114,7 +174,7 @@ fn proc_value(w: u32, pobj: vec3<f32>, uv: vec2<f32>, inst: u32) -> vec4<f32> {
     let t = proc_tex(w, proc_coord(w, pobj, uv, inst));
     var scalar = t.w;
     var color = vec3<f32>(t.w);
-    if (kind == PROC_NOISE_COLOR || kind == PROC_VORONOI_COLOR || kind == PROC_CHECKER_COLOR || kind == PROC_BRICK_COLOR || kind == PROC_MAGIC_COLOR) {
+    if (kind == PROC_NOISE_COLOR || kind == PROC_VORONOI_COLOR || kind == PROC_CHECKER_COLOR || kind == PROC_BRICK_COLOR || kind == PROC_MAGIC_COLOR || kind == PROC_WHITE_NOISE_COLOR) {
         color = t.rgb;
         scalar = dot(t.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
     }
@@ -122,7 +182,17 @@ fn proc_value(w: u32, pobj: vec3<f32>, uv: vec2<f32>, inst: u32) -> vec4<f32> {
     if (ramp != NO_TEX) {
         let u = clamp(scalar, 0.0, 1.0) * (255.0 / 256.0) + 0.5 / 256.0;
         let c = sample_raw(ramp, vec2<f32>(u, 0.5)).rgb;
-        return vec4<f32>(c, dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)));
+        color = c;
+        scalar = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+    }
+    // The Math node between the texture and the socket (`svm_math`). It is
+    // a scalar operation, so a colour output becomes the grey it maps to —
+    // which is what Blender does when a Math node feeds a colour socket.
+    let math = data[w + 40u];
+    if (math != MATH_NONE) {
+        scalar = svm_math(math, scalar, tf(w + 41u), tf(w + 42u));
+        if (data[w + 43u] != 0u) { scalar = clamp(scalar, 0.0, 1.0); }
+        color = vec3<f32>(scalar);
     }
     return vec4<f32>(color, scalar);
 }
@@ -176,7 +246,7 @@ fn proc_base(m: u32, base: vec3<f32>, pobj: vec3<f32>, uv: vec2<f32>, inst: u32)
 
 // The normal a material's bump slot gives a hit, or `n` as it is.
 fn proc_normal(m: u32, n: vec3<f32>, pobj: vec3<f32>, uv: vec2<f32>, inst: u32, foot: f32) -> vec3<f32> {
-    let w = m + 72u;
+    let w = m + 76u;
     if (proc_kind(w) == PROC_NONE) { return n; }
     return bump_normal(w, n, pobj, uv, inst, foot);
 }

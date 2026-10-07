@@ -54,7 +54,7 @@ pub struct Scene {
     /// (`add`, `push`) has one, at the identity.
     pub insts: Vec<Instance>,
     verts: HashMap<[u32; 7], u32>,
-    mat_ids: HashMap<[u32; 112], u32>,
+    mat_ids: HashMap<[u32; 120], u32>,
 }
 
 impl Scene {

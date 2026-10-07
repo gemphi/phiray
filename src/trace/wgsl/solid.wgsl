@@ -257,6 +257,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if (p.see_through > 0.0) {
         let seen = xray(o, d, srgb_to_linear(sky));
+        // X-ray sees every surface at once and keeps no one instance, so
+        // nothing is outlined under it (Blender draws the outline from its
+        // own prepass, which X-ray does not change).
+        outline_store(i, 0u);
         taa_sample(i, xray_grid(o, d, seen.near, pix, srgb(seen.col)));
         return;
     }
@@ -273,6 +277,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (h.tri == 0xffffffffu) {
         let g = grid_over(o, d, INF, pix);
         fx_store(i, srgb_to_linear(sky), g, 0u, vec3<f32>(0.0), 0.0);
+        outline_store(i, 0u);
         taa_sample(i, sky * (1.0 - g.a) + g.rgb);
         return;
     }
@@ -284,6 +289,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The hit's view depth: along the view axis from the eye (perspective)
     // or the far origin (orthographic), in Blender units.
     fx_store(i, s.col, g, (face(h.tri).w >> 16u) + 1u, s.nv, -h.t * p.units * dot(d, -p.back));
+    outline_store(i, (face(h.tri).w >> 16u) + 1u);
     // Standard view transform: scene-linear → sRGB display.
     taa_sample(i, srgb(s.col) * (1.0 - g.a) + g.rgb);
 }

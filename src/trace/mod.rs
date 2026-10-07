@@ -6,6 +6,7 @@ pub mod hash;
 pub mod srgb;
 pub mod ibl;
 pub mod instance;
+pub mod outline;
 pub mod proc;
 mod kernel;
 mod lamps;
@@ -26,9 +27,11 @@ enum BTail {
     Fx,
     Taa,
     Smaa,
+    Edge,
 }
 
-pub use shader::{Fx, Preview, Preview4, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
+pub use shader::{Edge, Fx, Preview, Preview4, Show, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
+pub use outline::Outline;
 pub use instance::Instance;
 pub use mat::Mat;
 pub use proc::{PROC_NORMALIZE, Proc};
@@ -60,6 +63,16 @@ pub struct Tracer {
     noise: GpuArray<u32>,
     /// SMAA's area and search tables (`smaa.rs`), bound to its passes.
     smaa: GpuArray<u32>,
+    /// One word an instance: its selection-outline class plus one
+    /// (`outline.rs`), bound to the outline pass. All zero — nothing
+    /// outlined — until [`Self::outline`] says otherwise.
+    class: GpuArray<u32>,
+    /// The classes held, so a selection that has not moved uploads nothing.
+    classes: Vec<u32>,
+    /// A settled image has one more sample to draw: the outline changed
+    /// under it (`Self::outline`), and the pass that lays it on runs with
+    /// the samples, not on its own.
+    reshow: bool,
     raster: bool,
     /// Faces in the scene (the prepass draws three vertices each).
     n_faces: u32,
@@ -189,6 +202,9 @@ impl Tracer {
             blank: GpuArray::zeroed(gpu, 4),
             noise: GpuArray::from(gpu, &blue_noise::BlueNoise::words()),
             smaa: GpuArray::from(gpu, &smaa::SmaaTables::words()),
+            class: GpuArray::zeroed(gpu, pose.insts.len().max(1)),
+            classes: vec![0; pose.insts.len()],
+            reshow: false,
             // Hardware rasterizes its primary hits (Workbench's prepass); a
             // software adapter traces them, where walking the tree is the
             // cheaper of the two (`visible.rs`).
@@ -277,6 +293,31 @@ impl Tracer {
         self.aa = n;
     }
 
+    /// Which objects the selection outline draws around
+    /// (`outline.rs`), one class an instance in the order the scene was
+    /// built in — a shorter list leaves the rest unoutlined. A selection
+    /// that has not moved uploads nothing; one that has leaves the samples
+    /// traced alone and asks for one more, so a settled image picks the new
+    /// outline up without starting over.
+    pub fn outline(&mut self, gpu: &Gpu, classes: &[Outline]) -> bool {
+        let mut words = vec![0u32; self.classes.len()];
+        for (word, class) in words.iter_mut().zip(classes) {
+            *word = class.word();
+        }
+        if words == self.classes {
+            return true;
+        }
+        self.classes = words;
+        self.reshow = true;
+        self.class.write_front(gpu, &self.classes)
+    }
+
+    /// Whether any object is outlined — whether the pass is worth a
+    /// dispatch at all.
+    fn outlined(&self) -> bool {
+        self.classes.iter().any(|w| *w != 0)
+    }
+
     /// Whether the mode anti-aliases by Workbench's jittered samples: Solid
     /// and Wireframe, in the viewport (`viewport_aa`) and in a final render
     /// (`render_aa`) alike, so a tile of a larger frame too. The gather
@@ -318,6 +359,11 @@ impl Tracer {
         if self.jittered() {
             tail.push((BTail::Taa, 0, n));
             tail.extend((1..=3).map(|stage| (BTail::Smaa, stage, n)));
+        }
+        // The overlay goes on last, over the anti-aliased image, as
+        // Blender's overlay engine draws after the shading.
+        if self.outlined() {
+            tail.push((BTail::Edge, 0, n));
         }
         tail
     }
@@ -368,9 +414,11 @@ impl Tracer {
         let drawn = self.rasterizes(&cam);
         cam.vis = self.vis_words(&cam, drawn, w);
         let same = self.last.is_some_and(|l| bytemuck::bytes_of(&l)[8..] == bytemuck::bytes_of(&cam)[8..]) && self.size == (w, h);
-        if same && self.frame + 1 >= self.samples() {
+        if same && !self.reshow && self.frame + 1 >= self.samples() {
             return Some((self.frame, true));
         }
+        // The outline changed: this one more sample lays it on.
+        self.reshow = false;
         self.frame = if same { self.frame + 1 } else { 0 };
         self.last = Some(cam);
         cam.frame = self.frame;
@@ -427,6 +475,7 @@ impl Tracer {
                     BTail::Fx => self.pass.add_over::<Fx>(gpu, n, items, cam, &[px.buffer(), self.noise.buffer()]),
                     BTail::Taa => self.pass.add::<Taa>(gpu, n, cam, &[px.buffer()]),
                     BTail::Smaa => self.pass.add::<Smaa>(gpu, n, cam, &[px.buffer(), self.smaa.buffer()]),
+                    BTail::Edge => self.pass.add::<Edge>(gpu, n, cam, &[px.buffer(), self.class.buffer()]),
                 };
             }
             self.px = Some(px);
@@ -469,9 +518,10 @@ impl Tracer {
     /// scratch images the a-trous filter ping-pongs between (14n..20n), and
     /// the grid overlay's premultiplied colour and coverage sums (20n..24n),
     /// and the film coverage sum — the pixel's alpha under a transparent
-    /// film (24n..25n). See `util.wgsl`'s `emit` and `guide`, and
-    /// `denoise.wgsl`.
-    pub(crate) const PX_WORDS: usize = 25;
+    /// film (24n..25n), and the selection outline's prepass — the instance
+    /// under the pixel plus one (25n..26n, `outline_store`). See
+    /// `util.wgsl`'s `emit` and `guide`, and `denoise.wgsl`.
+    pub(crate) const PX_WORDS: usize = 26;
 
     /// The most pixels one image may hold on `gpu`. The image is one
     /// binding of `PX_WORDS` words a pixel, and a device caps a binding —
@@ -530,6 +580,60 @@ impl Tracer {
             pass.add::<Denoise>(gpu, n, params, &[px.buffer()]);
         }
         pass.run(gpu);
+    }
+
+    /// The image's size, `(w, h)` — what the last view was rendered at,
+    /// and so the shape every readback comes back in.
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    /// Show `linear` as this image: the scene-linear radiance a host has
+    /// *changed* — composited (`phiphx::comp`), graded, anything — put
+    /// back in place of the traced mean and run through the display step,
+    /// so [`Self::pixels`], [`Self::display`] and [`Self::radiance`] all
+    /// come back agreeing with it.
+    ///
+    /// Blender composites the render's scene-linear pixels and applies the
+    /// view transform **after** (`RE_RenderFrame`, then the display
+    /// pipeline). A host that composited the *displayed* pixels instead
+    /// would be grading after AgX rather than before it — wrong, and wrong
+    /// in a way that looks plausible — so the way back in is here rather
+    /// than a second CPU implementation of the transform.
+    ///
+    /// `linear` is one triple a pixel, row 0 first, and is truncated or
+    /// zero-filled to the image's own size. `false` when there is no image
+    /// yet, no camera to transform with, or the device refuses the write.
+    pub fn show(&mut self, gpu: &Gpu, linear: &[[f32; 3]]) -> bool {
+        let (w, h) = self.size;
+        let n = (w as usize) * (h as usize);
+        let (Some(px), Some(cam)) = (self.px.as_mut(), self.last) else { return false };
+        if n == 0 {
+            return false;
+        }
+        // The sums are `k` times the mean, so what goes in is scaled by the
+        // sample count the buffer is at — otherwise showing a composited
+        // image would darken it by `1 / k`.
+        let k = (self.frame + 1) as f32;
+        let mut words = Vec::with_capacity(3 * n);
+        for i in 0..n {
+            let c = linear.get(i).copied().unwrap_or([0.0; 3]);
+            words.extend(c.iter().map(|v| (v * k).to_bits()));
+        }
+        if !px.write_at(gpu, n, &words) {
+            return false;
+        }
+        let d = Dispatch::new(n as u32);
+        // `self.last` keeps the camera as it was *compared* — frame 0, since
+        // the frame is not part of what makes two views the same — so the
+        // sample count has to be put back by hand. Taking `last.frame` gave
+        // `k = 1` in the kernel and an image 32 times too bright, which the
+        // round-trip test caught at once.
+        let cam = Camera { n: n as u32, groups_x: d.x, slice: [0; 4], frame: self.frame, ..cam };
+        let mut pass = Pass::default();
+        pass.add::<Show>(gpu, n as u32, cam, &[px.buffer()]);
+        pass.run(gpu);
+        true
     }
 
     /// Linear radiance per pixel (mean of the samples so far), before tone mapping.

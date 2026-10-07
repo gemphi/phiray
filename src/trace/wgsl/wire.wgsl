@@ -86,14 +86,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         var g = grid_over(o, d, INF, pix);
         if (abs(d.z) > 1e-6 && -o.z / d.z > near) { g *= p.see_through; }
+        outline_store(i, 0u);
         taa_sample(i, mix(sky * (1.0 - g.a) + g.rgb, p.env.rgb, 1.0 - keep));
         return;
     }
     let h = primary(o, d, i);
     if (h.tri == 0xffffffffu) {
+        outline_store(i, 0u);
         taa_sample(i, floor_grid(o, d, INF, pix, sky));
         return;
     }
+    outline_store(i, (face(h.tri).w >> 16u) + 1u);
     let behind = floor_grid(o, d, h.t, pix, sky);
     taa_sample(i, mix(behind, p.env.rgb, wire_at(h, h.t, pix)));
 }

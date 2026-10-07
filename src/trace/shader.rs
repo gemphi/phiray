@@ -68,6 +68,32 @@ impl Kernel for Fx {
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/fx.wgsl"), include_str!("wgsl/dof.wgsl"));
 }
 
+/// The display step alone (`show.wgsl`): the view transform and the grid
+/// over the linear sums already in the image, so a host that has
+/// composited the linear pixels can have them shown without a second
+/// implementation of the transform (`Tracer::show`). It binds the image.
+pub struct Show;
+
+impl Kernel for Show {
+    const NAME: &'static str = "show";
+    const BINDS: &'static [Bind] = &[Bind::Write];
+    type Params = Camera;
+    const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/show.wgsl"));
+}
+
+/// The selection outline (`outline.wgsl`): the id edges of the selected
+/// objects over the finished image, after the gather and SMAA — Blender's
+/// overlay pass. It binds the image and the per-instance class table
+/// (`outline.rs`).
+pub struct Edge;
+
+impl Kernel for Edge {
+    const NAME: &'static str = "edge";
+    const BINDS: &'static [Bind] = &[Bind::Write, Bind::Read];
+    type Params = Camera;
+    const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/outline.wgsl"));
+}
+
 macro_rules! trace_wgsl {
     ($binds:literal) => {
         concat!(
@@ -76,6 +102,9 @@ macro_rules! trace_wgsl {
             include_str!($binds),
             include_str!("wgsl/texture.wgsl"),
             include_str!("wgsl/noise.wgsl"),
+            include_str!("wgsl/hash.wgsl"),
+            include_str!("wgsl/gabor.wgsl"),
+            include_str!("wgsl/math.wgsl"),
             include_str!("wgsl/voronoi.wgsl"),
             include_str!("wgsl/pattern.wgsl"),
             include_str!("wgsl/procedural.wgsl"),
@@ -99,6 +128,9 @@ macro_rules! preview_wgsl {
             include_str!($binds),
             include_str!("wgsl/texture.wgsl"),
             include_str!("wgsl/noise.wgsl"),
+            include_str!("wgsl/hash.wgsl"),
+            include_str!("wgsl/gabor.wgsl"),
+            include_str!("wgsl/math.wgsl"),
             include_str!("wgsl/voronoi.wgsl"),
             include_str!("wgsl/pattern.wgsl"),
             include_str!("wgsl/procedural.wgsl"),

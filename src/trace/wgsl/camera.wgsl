@@ -34,6 +34,15 @@ struct Camera {
     shadow_fade: vec4<f32>,
     matcap: vec4<u32>,
     dof: vec4<f32>,
+    outline_fx: vec4<f32>,
+    outline_pick: vec4<f32>,
+    outline_active: vec4<f32>,
+    outline_move: vec4<f32>,
     lights: array<Light, 16>,
 }
 struct Light { pos: vec3<f32>, kind: u32, color: vec3<f32>, size: f32, dir: vec3<f32>, cone: f32, right: vec3<f32>, size_y: f32, shape: u32, blend: f32, spot_scale: vec2<f32> }
+// `Light::shape` (`eLightAreaShape`): the two rounded shapes. Here rather
+// than in `shadow.wgsl`, which only Material Preview's kernel includes —
+// the path tracer needs them too, for an area light's own area (§57).
+const AREA_DISK: u32 = 4u;
+const AREA_ELLIPSE: u32 = 5u;

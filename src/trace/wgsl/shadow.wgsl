@@ -19,9 +19,6 @@
 const SHADOW_TAPS: u32 = 8u;
 // Under this, a light's shape is a point and its shadow is hard.
 const SHADOW_HARD: f32 = 1e-5;
-// `Light::shape` (`eLightAreaShape`): the two rounded shapes.
-const AREA_DISK: u32 = 4u;
-const AREA_ELLIPSE: u32 = 5u;
 
 // `van_der_corput_radical_inverse`.
 fn radical_inverse(n: u32) -> f32 {

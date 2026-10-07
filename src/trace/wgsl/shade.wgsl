@@ -65,6 +65,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pix = 1.0 / (p.scale * p.units * frame_size().x);
     // The theme's sky, with its sweep when it has one (`sky_at`).
     let sky = sky_at(i);
+    // The selection outline's prepass: nothing until the first surface
+    // says otherwise, so every return below leaves it right.
+    outline_store(i, 0u);
     let o0 = o;
     let d0 = d;
     var first_t = INF;
@@ -112,7 +115,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             col += thr * env_at(d);
             break;
         }
-        if (bounce == 0u) { first_t = h.t; }
+        if (bounce == 0u) {
+            first_t = h.t;
+            outline_store(i, (face(h.tri).w >> 16u) + 1u);
+        }
         // A Mix Shader's two closures: one of them per hit, by the weight
         // (`svm_node_mix_closure` weights the closures and the sampler picks
         // one by weight, which is unbiased); the other hits of the pixel's

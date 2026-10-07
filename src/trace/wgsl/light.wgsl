@@ -81,10 +81,15 @@ fn ggx_weight(alpha2: f32, cos_ni: f32, cos_no: f32) -> f32 {
 }
 
 // Radiance arriving from direction `d`: the world's environment image when it
-// has one, otherwise a soft dome (brighter above the horizon).
+// has one, otherwise the world's own colour — uniform in every direction, as
+// a Background node with no image is. There used to be a gradient here
+// (`mix(0.35, 1.15, …)`, brighter above the horizon), which looked like a
+// sky but is not what Blender lights with: it put about 2 % more on an
+// upward-facing surface than the flat colour should, and more than that on
+// a downward-facing one (`rendering.md` §54).
 fn env_at(d: vec3<f32>) -> vec3<f32> {
     if (p.envmap == 0u) {
-        return p.env.rgb * mix(0.35, 1.15, clamp(d.z * 0.5 + 0.5, 0.0, 1.0));
+        return p.env.rgb;
     }
     // `direction_to_equirectangular` with the world Mapping node's Z spin.
     let c = cos(p.env_rot);
@@ -198,12 +203,18 @@ fn visible(org: vec3<f32>, l: vec3<f32>, dist: f32) -> f32 {
 
 fn lights(s: Surf, seed: ptr<function, u32>) -> vec3<f32> {
     var c = vec3<f32>(0.0);
-    // An environment image is a light. With one present and no lamps, it is
-    // the only light — Blender adds nothing on top of a world, and Material
+    // A world is a light, image or no image. With one and no lamps it is the
+    // only light — Blender adds nothing on top of a world, and Material
     // Preview's studio HDRI is exactly this case. The three-point rig below
-    // is a fallback for a scene with no light of any kind, and adding it on
-    // top of a world made every lamp-less HDRI scene about a fifth too bright.
-    if (p.count == 0u && p.envmap != 0u) { return c; }
+    // is a fallback for a scene with no light of *any* kind.
+    //
+    // This used to test the environment image alone, so a scene lit by a
+    // flat world colour got the rig on top of it: a dome of radiance L came
+    // back as `0.83 L + 0.068` where Blender gives exactly `albedo × L`
+    // (`rendering.md` §54). An image was already excluded for the same
+    // reason — it made every lamp-less HDRI scene about a fifth too bright.
+    let world_lit = p.envmap != 0u || dot(p.env.rgb, p.env.rgb) > 0.0;
+    if (p.count == 0u && world_lit) { return c; }
     if (p.count == 0u) {
         // Three-point rig tied to the view: key (shadowed), fill, rim.
         let key = cone_dir(p.sun, 0.06, seed);
@@ -232,11 +243,31 @@ fn lights(s: Surf, seed: ptr<function, u32>) -> vec3<f32> {
         let to = aim - s.pos;
         let d2 = max(dot(to, to), 1e-6);
         let l = to / sqrt(d2);
-        var e = li.color / (4.0 * PI * PI * d2);
+        // Irradiance at the surface, which is what the BSDF below expects:
+        // a lamp's Power over the sphere it fills, `P / (4π d²)`. The BSDF
+        // divides the diffuse albedo by π itself (`brdf_w`), so dividing by
+        // π here as well — which this did, as `4π²d²` — made every lamp π
+        // times too dim (`rendering.md` §54).
+        var e = li.color / (4.0 * PI * d2);
         if (li.kind == 2u) {
             e *= spot_mask(li, l);
         } else if (li.kind == 3u) {
-            e *= max(dot(-l, li.dir), 0.0) * 2.0;
+            // An area light shines from one side only, and its radiance is
+            // its flux over its area (`eevee_light.cc`'s
+            // `shape_radiance_get`: `L = P / (π A)` over the full
+            // rectangle). Far away that comes to `P cos / (π d²)` — the
+            // area cancels, which is what Blender means by "make
+            // illumination power constant" — and `e` already carries
+            // `1/(4π d²)`, so the factor is 4 (§55).
+            //
+            // Close up the source is not a point. The disk of the same area
+            // puts `L π r² / (r² + d²)` on a surface, with `r² = A/π`, so
+            // the whole of the correction is `d²` becoming `d² + A/π`
+            // (§57). At a metre square and two metres away that is 1.877
+            // against Cycles' 1.862, where the far-field form gives 2.026.
+            let shape = li.shape == AREA_DISK || li.shape == AREA_ELLIPSE;
+            let a = max(li.size * li.size_y, 0.0) * select(1.0, 0.25 * PI, shape);
+            e *= max(dot(-l, li.dir), 0.0) * 4.0 * d2 / (d2 + a / PI);
         }
         if (max(e.r, max(e.g, e.b)) < 1e-5) { continue; }
         c += brdf(s, l, e) * visible(s.pos, l, sqrt(d2) * 0.999) * weight;
@@ -451,7 +482,12 @@ fn env_light(s: Surf, seed: ptr<function, u32>, mis_spec: bool) -> vec3<f32> {
 // Without a world image and without glowing meshes there is nothing to gather,
 // so one occlusion ray within `p.ao` stands in — Workbench's ambient occlusion.
 fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32> {
-    let lit = p.envmap != 0u;
+    // A world is something to gather, image or no image — the same
+    // predicate the direct pass uses (§54). This tested the image alone, so
+    // a scene whose world is a flat colour never took the path below at
+    // all: it got one occlusion ray with a 0.25 floor instead, and
+    // `Camera::bounces` did nothing for it (`rendering.md` §56).
+    let lit = p.envmap != 0u || dot(p.env.rgb, p.env.rgb) > 0.0;
     if (p.glow == 0u && !lit) {
         let dir = cosine_dir(n, seed);
         return env_at(dir) * mix(0.25, 1.0, visible(pos, dir, p.ao));
@@ -498,7 +534,11 @@ fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32>
     // Without a sampling table the tail stands in for the light a cosine ray
     // rarely finds; with one, that light is sampled directly and the tail would
     // double it.
-    if (!escaped && !sampled) { acc += thr * env_at(nrm) * 0.8; }
+    // A *uniform* world needs none of that: a cosine ray finds it with
+    // exactly the probability the surface is open to it, so the path above
+    // is already unbiased and the tail would be pure over-count. It is for
+    // an environment image with no sampling table.
+    if (!escaped && !sampled && p.envmap != 0u) { acc += thr * env_at(nrm) * 0.8; }
     return acc;
 }
 
