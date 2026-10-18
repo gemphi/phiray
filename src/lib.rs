@@ -12,7 +12,7 @@ pub mod mode;
 pub mod trace;
 
 pub use bvh::{Aabb, Bvh, GpuBvh, Half, Node};
-pub use gpu::{Gpu, GpuAdapter, GpuAdapters, GpuArray, Pass};
+pub use gpu::{Gpu, GpuAdapter, GpuAdapters, GpuArray, Pass, PatienceFor};
 pub use kernel::{BLOCK, Bind, Dispatch, Kernel};
 pub use mode::Mode;
 pub use trace::{AREA_DISK, AREA_ELLIPSE, AREA_RECT, AREA_SQUARE, Atlas, Camera, Instance, LIGHTS, Lamps, Light, Mat, NO_MAT, NO_TEX, PROC_NORMALIZE, Proc, Scene, Srgb, Tracer, Tri, View};

@@ -132,7 +132,7 @@ impl<T: Pod> GpuArray<T> {
         gpu.queue.submit([enc.finish()]);
         let slice = staging.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
-        if !gpu.wait_for(super::WAIT_LIMIT) {
+        if !gpu.wait_for(gpu.patience()) {
             // The device did not drain in time. Return nothing rather than
             // read an unmapped range (which panics) or wait forever: every
             // caller treats a short read as "the GPU declined" and computes

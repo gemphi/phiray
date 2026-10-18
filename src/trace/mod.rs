@@ -149,6 +149,62 @@ impl Tracer {
     /// (`trees.rs`); nodes, faces and vertices are each split over `chunks`
     /// (2 or 4) bindings, so a scene may use `chunks ×` the limit per array
     /// (as Blender's GPU backends chunk large buffers).
+    /// Why this scene will not build on a device with this binding limit,
+    /// in the words the Info report shows — `None` when it fits.
+    ///
+    /// Every `None` out of [`Self::with_chunks`] used to look the same from
+    /// outside: the app said "no adapter, or a scene the GPU declined" and
+    /// the Render Result was blank. A frame that does not render has one
+    /// specific reason and the user is entitled to it, so the checks state
+    /// theirs and `with_chunks` reads from here rather than keeping a
+    /// second copy of the arithmetic.
+    pub fn why_not(scene: &Scene, limit: u64, chunks: usize) -> Option<String> {
+        let chunks = if chunks > 2 { 4 } else { 2 } as u64;
+        let mib = |b: u64| format!("{:.0} MB", b as f64 / 1048576.0);
+        if scene.is_empty() {
+            return Some("the scene has nothing in it".into());
+        }
+        let biggest = scene.biggest();
+        if biggest > limit * chunks {
+            return Some(format!(
+                "its largest array is {} and this device binds {} over {chunks} chunks",
+                mib(biggest),
+                mib(limit * chunks)
+            ));
+        }
+        // The one array that is NOT chunked: the scene table, the texture
+        // atlas, the instance words and — when any object carries a colour
+        // attribute — one word per vertex in the whole scene.
+        let data = Self::data_words(scene) * 4;
+        if data > limit {
+            return Some(format!(
+                "its material/texture table is {} and this device binds {} in one piece (it is not chunked: the atlas is {}, and a colour attribute adds one word per vertex over {} vertices)",
+                mib(data),
+                mib(limit),
+                mib(scene.atlas.words().len() as u64 * 4),
+                scene.pos.len()
+            ));
+        }
+        for (what, items, each) in [
+            ("vertices", scene.pos.len() as u64, 32u64),
+            ("faces", scene.faces.len() as u64, 16),
+        ] {
+            let cap = (limit / each).max(1) * chunks;
+            if items > cap {
+                return Some(format!("it has {items} {what} and this device binds {cap} over {chunks} chunks"));
+            }
+        }
+        None
+    }
+
+    /// The length, in words, of the unchunked `data` buffer `with_chunks`
+    /// assembles — the figure [`Self::why_not`] checks and the one the
+    /// builder itself lays out below.
+    fn data_words(scene: &Scene) -> u64 {
+        let colors = if scene.colors.is_empty() { 0 } else { scene.pos.len() as u64 };
+        scene.table().len() as u64 + scene.atlas.words().len() as u64 + scene.insts.len() as u64 * (instance::INSTANCE_WORDS as u64 + 1) + colors
+    }
+
     pub fn with_chunks(gpu: &Gpu, mut scene: Scene, limit: u64, chunks: usize) -> Option<Self> {
         let chunks = if chunks > 2 { 4 } else { 2 };
         if scene.biggest() > limit * chunks as u64 {

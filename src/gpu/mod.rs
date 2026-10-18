@@ -26,6 +26,39 @@ use std::time::Duration;
 /// key could not reach the thread to stop it.
 pub const WAIT_LIMIT: Duration = Duration::from_secs(5);
 
+/// How long a readback waits for the device, when the caller has not said.
+///
+/// [`WAIT_LIMIT`] is a *hang* guard, and five seconds is right for the
+/// viewport, where a frame that is not back in five seconds is no longer
+/// worth drawing. It is the wrong budget for a **final render**: a
+/// 2048-sample 1440 × 1440 frame of a seven-million-face scene keeps the
+/// GPU busy for the best part of a minute, the readback gave up, and
+/// `read_first` returned an empty buffer — which every caller reads as
+/// "the GPU declined". That is how `phiber -b … -f 1` on pose 26 produced
+/// a blank Render Result while the GPU was working perfectly.
+///
+/// So the budget is the caller's: [`Gpu::patience`] holds the current one
+/// and [`PatienceFor`] raises it for as long as a render needs.
+static PATIENCE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(5_000);
+
+/// Raise the readback budget for as long as this value lives, then put the
+/// previous one back — so a final render may wait minutes without the
+/// viewport's own reads losing their five-second guard.
+pub struct PatienceFor(u64);
+
+impl PatienceFor {
+    pub fn render(limit: Duration) -> Self {
+        let was = PATIENCE_MS.swap(limit.as_millis() as u64, std::sync::atomic::Ordering::Relaxed);
+        Self(was)
+    }
+}
+
+impl Drop for PatienceFor {
+    fn drop(&mut self) {
+        PATIENCE_MS.store(self.0, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// The process's device, and how many times it was replaced.
 static SHARED: Mutex<Option<Option<Gpu>>> = Mutex::new(None);
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -138,6 +171,11 @@ impl Gpu {
     /// [`Gpu::wait`] with a deadline: `false` when the device did not drain
     /// within `limit`. wgpu has no cancellable poll, so the wait still runs —
     /// on a helper thread — but the caller is released and can fall back.
+    /// The readback budget in force (`PatienceFor`).
+    pub fn patience(&self) -> Duration {
+        Duration::from_millis(PATIENCE_MS.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     pub fn wait_for(&self, limit: Duration) -> bool {
         let (tx, rx) = mpsc::channel();
         let gpu = self.clone();
