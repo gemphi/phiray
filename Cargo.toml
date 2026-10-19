@@ -17,3 +17,11 @@ bytemuck = { version = "1", features = ["derive"] }
 pollster.workspace = true
 rayon.workspace = true
 wgpu.workspace = true
+
+web-time = { workspace = true }
+
+[dev-dependencies]
+# naga is the front end wgpu hands WGSL to, so `tests/wgsl.rs` can type-check
+# every kernel on a machine with no adapter. Keep this version equal to the
+# workspace's wgpu, or cargo links two copies of naga.
+naga = { version = "29.0.4", features = ["wgsl-in"] }

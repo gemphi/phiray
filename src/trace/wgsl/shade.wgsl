@@ -33,6 +33,11 @@ fn lens_offset(ru: f32, rv: f32) -> vec2<f32> {
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = pixel(gid);
     if (i >= p.n) { return; }
+    // A pixel Adaptive Sampling has settled is not sampled again
+    // (`film_need_sample_pixel`). This is where the time is saved: on a
+    // frame whose floor and background converge in tens of samples, most
+    // of the image stops costing anything long before the target.
+    if (adapt_settled(i)) { return; }
     let sp = frame_point(i);
     let su = sp.x;
     let sv = sp.y;

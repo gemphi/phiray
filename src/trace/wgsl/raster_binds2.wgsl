@@ -7,5 +7,5 @@
 @group(0) @binding(4) var<storage, read> verts1: array<Vert>;
 @group(0) @binding(5) var<storage, read> data: array<u32>;
 
-fn face(i: u32) -> vec4<u32> { let k = i / p.split.y; let j = i - k * p.split.y; if (k == 0u) { return faces0[j]; } return faces1[j]; }
-fn vert(i: u32) -> Vert { let k = i / p.split.z; let j = i - k * p.split.z; if (k == 0u) { return verts0[j]; } return verts1[j]; }
+fn face(i: u32) -> vec4<u32> { let s = p.split.y; if (i < s) { return faces0[i]; } return faces1[i - s]; }
+fn vert(i: u32) -> Vert { let s = p.split.z; if (i < s) { return verts0[i]; } return verts1[i - s]; }

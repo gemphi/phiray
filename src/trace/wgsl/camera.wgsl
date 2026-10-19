@@ -38,6 +38,8 @@ struct Camera {
     outline_pick: vec4<f32>,
     outline_active: vec4<f32>,
     outline_move: vec4<f32>,
+    // Adaptive Sampling: [threshold, min samples, step, on].
+    adapt: vec4<f32>,
     lights: array<Light, 16>,
 }
 struct Light { pos: vec3<f32>, kind: u32, color: vec3<f32>, size: f32, dir: vec3<f32>, cone: f32, right: vec3<f32>, size_y: f32, shape: u32, blend: f32, spot_scale: vec2<f32> }

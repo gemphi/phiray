@@ -524,7 +524,29 @@ fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32>
         let s = plain_surf(hit, ng, -dir, albedo, mix(vec3<f32>(0.04), base, t.metal), max(t.rough, 0.3));
         acc += thr * (lights(s, seed) + glow_light(s, seed) + env_light(s, seed, false)) * near;
         thr *= albedo;
-        if (max(thr.r, max(thr.g, thr.b)) < 0.02) { break; }
+        // Russian roulette, as Cycles terminates a path
+        // (`path_state_continuation_probability`).
+        //
+        // This was a hard cutoff — stop below a throughput of 0.02 — which
+        // is cheap and *biased*: every path it drops loses the light it
+        // would still have carried, and that light is exactly the light in
+        // crevices, so the cutoff darkened them. It also barely fired. A
+        // surface of albedo 0.8 is still at 0.41 after four bounces, so on
+        // a bright scene almost every path ran the full depth.
+        //
+        // Roulette keeps a path with a probability equal to its own
+        // throughput and scales the survivors up by the same factor, so the
+        // expected radiance is unchanged — the image is the same, the ray
+        // count is not. Dim paths die early, bright ones carry on, and
+        // nothing is silently discarded.
+        //
+        // Capped at 0.95 so even a white surface sheds some paths, and not
+        // applied to the last bounce, which has nothing left to terminate.
+        if (b + 1u < depth) {
+            let keep = clamp(max(thr.r, max(thr.g, thr.b)), 0.0, 0.95);
+            if (keep < 1e-4 || rnd(seed) > keep) { break; }
+            thr /= keep;
+        }
         org = hit;
         nrm = ng;
     }

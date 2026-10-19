@@ -58,13 +58,53 @@ fn view_transform(lin: vec3<f32>) -> vec3<f32> {
 // white. On THYMUS it cost ~30% of the highlights and, under a white
 // material override, turned a figure Cycles blows out (mean 227) into a grey
 // one (mean 90).
+// --- Adaptive Sampling (Cycles' `film/adaptive_sampling.h`) ----------------
+//
+// A second, HALF image is kept beside the full one: `aux` takes every
+// other sample at double weight, so once a pixel has settled the two
+// estimates agree and their disagreement is a noise measure. This is the
+// heuristic from "A hierarchical automatic stopping condition for Monte
+// Carlo global illumination", applied per pixel as Cycles applies it —
+// not in hierarchical tiles.
+//
+// Words (see `Tracer::PX_WORDS`): the half image's rgb at `26n + 3i`, and
+// the converged flag at `29n + i`.
+fn adapt_on() -> bool { return p.adapt.w != 0.0; }
+fn adapt_aux(i: u32) -> u32 { return 26u * p.n + 3u * i; }
+fn adapt_flag(i: u32) -> u32 { return 29u * p.n + i; }
+// The flag AFTER the dilation (`adapt.wgsl`'s `dilate`), which is the one
+// the tracer obeys: a pixel stops only when it and its four neighbours
+// have all settled.
+fn adapt_seen(i: u32) -> u32 { return 30u * p.n + i; }
+// Samples THIS pixel has actually taken — Cycles' `pass_sample_count`.
+//
+// With Adaptive Sampling a settled pixel stops being sampled, so the
+// global frame number stops being its divisor. Dividing its frozen sum
+// by the frame count anyway darkens it by exactly the fraction of the
+// render it sat out: a pixel that settled at 80 of 2048 came back
+// twenty-five times too dark. Every mean is taken over THIS, never over
+// `p.frame`.
+fn adapt_count(i: u32) -> u32 { return 31u * p.n + i; }
+
+// Converged pixels are not sampled again — `film_need_sample_pixel`.
+fn adapt_settled(i: u32) -> bool {
+    return adapt_on() && px[adapt_seen(i)] != 0u;
+}
+
+// Cycles writes the aux buffer on one sample class of the two, at double
+// weight, so it estimates the same mean from half the samples.
+fn adapt_is_class_a(frame: u32) -> bool { return (frame & 1u) == 1u; }
+
 fn emit(i: u32, lin: vec3<f32>, over: vec4<f32>, cover: f32) {
     let a = p.n + 3u * i;
     let g = 20u * p.n + 3u * i;
     let gc = 23u * p.n + i;
     let fc = 24u * p.n + i;
     let keep = p.frame > 0u;
-    let k = f32(p.frame + 1u);
+    let cn = adapt_count(i);
+    let taken = select(0u, px[cn], keep) + 1u;
+    px[cn] = taken;
+    let k = f32(taken);
     let film = select(0.0, bitcast<f32>(px[fc]), keep) + cover;
     px[fc] = bitcast<u32>(film);
     let l = select(vec3<f32>(0.0), vec3<f32>(bitcast<f32>(px[a]), bitcast<f32>(px[a + 1u]), bitcast<f32>(px[a + 2u])), keep) + lin;
@@ -77,6 +117,13 @@ fn emit(i: u32, lin: vec3<f32>, over: vec4<f32>, cover: f32) {
     px[g + 1u] = bitcast<u32>(gs.y);
     px[g + 2u] = bitcast<u32>(gs.z);
     px[gc] = bitcast<u32>(cov);
+    if (adapt_on() && adapt_is_class_a(p.frame)) {
+        let x = adapt_aux(i);
+        let half = select(vec3<f32>(0.0), vec3<f32>(bitcast<f32>(px[x]), bitcast<f32>(px[x + 1u]), bitcast<f32>(px[x + 2u])), keep) + lin * 2.0;
+        px[x] = bitcast<u32>(half.x);
+        px[x + 1u] = bitcast<u32>(half.y);
+        px[x + 2u] = bitcast<u32>(half.z);
+    }
     let shown = view_transform(l / k) * (1.0 - cov / k) + gs / k;
     let b = 4u * p.n + 3u * i;
     px[b] = bitcast<u32>(shown.x);
