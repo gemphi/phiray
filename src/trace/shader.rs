@@ -29,6 +29,33 @@ pub struct Preview;
 /// Material Preview over 4 bindings per array.
 pub struct Preview4;
 
+/// Adaptive Sampling's convergence check (`adapt.wgsl`): Cycles'
+/// `film_adaptive_sampling_convergence_check` over the full and half
+/// images the path tracer accumulates, marking pixels that have settled
+/// so the tracer stops sampling them. It binds the image alone.
+pub struct Adapt;
+
+impl Kernel for Adapt {
+    const NAME: &'static str = "adapt";
+    const BINDS: &'static [Bind] = &[Bind::Write];
+    type Params = Camera;
+    const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/adapt.wgsl"));
+}
+
+/// Adaptive Sampling's dilation (`adapt.wgsl`'s `dilate`): Cycles'
+/// `film_adaptive_sampling_filter_x` / `_y` as one parallel pass, so a
+/// settled pixel beside an unsettled one keeps refining. Same source as
+/// [`Adapt`], a different entry point.
+pub struct AdaptDilate;
+
+impl Kernel for AdaptDilate {
+    const NAME: &'static str = "adapt_dilate";
+    const ENTRY: &'static str = "dilate";
+    const BINDS: &'static [Bind] = &[Bind::Write];
+    type Params = Camera;
+    const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/adapt.wgsl"));
+}
+
 /// Workbench's anti-aliasing gather (`taa.wgsl`): one sample's image
 /// filtered into the running sums and resolved, after each Solid or
 /// Wireframe dispatch. It binds the image alone.

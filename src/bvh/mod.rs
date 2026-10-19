@@ -9,12 +9,20 @@ mod build;
 mod gpu;
 mod kernels;
 mod node;
+mod radix;
 mod shape;
+mod sort;
+mod spread;
+mod wide;
 
 pub use build::{Bvh, Link};
 pub use gpu::GpuBvh;
 pub use kernels::{Karras, Morton, Refit};
+pub use radix::{BINS, Clear, Count, DIGIT, Offset, PASSES, RadixParams, Scatter, Seed};
+pub use sort::GpuSort;
+pub use spread::Spread;
 pub use node::{Aabb, Half, Node, STACK, morton};
+pub use wide::{WIDTH, Wide};
 pub(crate) use node::LEAF;
 
 /// 30-bit Morton code of a point normalised to `[0, 1]` (the WGSL `Morton` kernel matches this).

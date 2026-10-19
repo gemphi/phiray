@@ -1,6 +1,7 @@
 //! CPU builder — the reference the GPU kernels must match.
 
 use super::node::{Aabb, LEAF, Node, STACK};
+use super::wide::{self, Wide, WIDTH};
 use super::{code, delta};
 use rayon::prelude::*;
 
@@ -21,6 +22,11 @@ pub struct Bvh {
     pub order: Vec<u32>,
     /// Deepest reachable node (root = 0), ≤ `STACK - 1`.
     pub depth: u32,
+    /// The four-wide view the kernel walks (`wide.rs`), kept in step with
+    /// `nodes` by `refit`; `wide_of` names the binary node behind each
+    /// child slot so a refit carries bounds over without collapsing again.
+    pub wide: Vec<Wide>,
+    pub wide_of: Vec<[u32; WIDTH]>,
 }
 
 impl Link {
@@ -130,7 +136,7 @@ impl Bvh {
             queue.extend([(l.left as usize, at, d + 1), (l.right as usize, at + 1, d + 1)]);
         }
         drop(links);
-        let mut bvh = Self { nodes, order, depth };
+        let mut bvh = Self { nodes, order, depth, ..Default::default() };
         bvh.refit(prims);
         bvh
     }
@@ -164,7 +170,7 @@ impl Bvh {
             stack.push((l.left as usize, d + 1));
             stack.push((l.right as usize, d + 1));
         }
-        Self { nodes, order, depth }
+        Self { nodes, order, depth, ..Default::default() }
     }
 
     /// Bounds again over `boxes` given by sorted slot (prims already in leaf
@@ -176,8 +182,24 @@ impl Bvh {
         self.order = order;
     }
 
-    /// Exact bounds of every reachable node (iterative post-order from the root).
+    /// Exact bounds of every reachable node (iterative post-order from the
+    /// root), and the wide view brought in step.
     pub fn refit(&mut self, prims: &[Aabb]) {
+        self.refit_binary(prims);
+        self.widen();
+    }
+
+    /// The wide view from `nodes`: bounds carried over when the structure is
+    /// the one it was collapsed from, collapsed afresh otherwise.
+    pub fn widen(&mut self) {
+        if !self.wide.is_empty() && self.wide_of.len() == self.wide.len() {
+            wide::rebound(&mut self.wide, &self.wide_of, &self.nodes);
+        } else {
+            (self.wide, self.wide_of) = wide::collapse(&self.nodes);
+        }
+    }
+
+    fn refit_binary(&mut self, prims: &[Aabb]) {
         let mut stack = if self.nodes.is_empty() { vec![] } else { vec![(0usize, false)] };
         while let Some((i, done)) = stack.pop() {
             let nd = self.nodes[i];

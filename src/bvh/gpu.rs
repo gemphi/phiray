@@ -1,8 +1,10 @@
-//! `GpuBvh`: build on the GPU (codes, links, bounds), refit per frame by replay.
-//! Sorting and leaf packing still run on the CPU (see `jobs.md`).
+//! `GpuBvh`: build on the GPU (codes, sort, links, bounds), refit per frame
+//! by replay. **Leaf packing** is the one step still on the CPU, and the one
+//! readback the build makes is the order it needs (see `jobs.md`).
 
 use super::build::{Bvh, Link};
 use super::kernels::{Karras, KarrasParams, Morton, MortonParams, Refit, RefitParams};
+use super::sort::GpuSort;
 use super::node::{Aabb, Node};
 use crate::gpu::{Gpu, GpuArray, Pass};
 
@@ -34,21 +36,26 @@ impl GpuBvh {
         pass.add::<Morton>(gpu, n as u32, mp, &[gprims.buffer(), codes.buffer()]);
         pass.run(gpu);
 
-        // 2. Sort (CPU, parallel).
-        let (order, sorted) = Bvh::sort_codes(&codes.read(gpu));
+        // 2. Sort on the GPU (`radix.rs`), where it used to come back to
+        //    the CPU: read the codes, `par_sort_unstable_by_key`, upload the
+        //    result. The 64-bit key makes the radix order identical to that
+        //    sort's, value for value, so this is a move and not a change.
+        let sort = GpuSort::record(gpu, codes.buffer(), n as u32);
+        sort.run(gpu);
 
-        // 3. Karras links on the GPU.
+        // 3. Karras links on the GPU, reading the sorted codes where the
+        //    sort left them (`GpuSort::code`) rather than from an upload.
         let links = if n > 1 {
-            let sorted_g = GpuArray::from(gpu, &sorted);
             let out = GpuArray::<Link>::from(gpu, &vec![Link::default(); n - 1]);
             pass.clear();
             let kp = KarrasParams { leaves: n as u32, ..Default::default() };
-            pass.add::<Karras>(gpu, n as u32 - 1, kp, &[sorted_g.buffer(), out.buffer()]);
+            pass.add::<Karras>(gpu, n as u32 - 1, kp, &[sort.code().buffer(), out.buffer()]);
             pass.run(gpu);
             out.read(gpu)
         } else {
             Vec::new()
         };
+        let order = sort.order(gpu);
 
         // 4. Pack (CPU) and upload; 5. bounds by refit passes.
         let packed = Bvh::assemble(order, &links, leaf);
@@ -93,6 +100,8 @@ impl GpuBvh {
 
     /// Read back as a CPU `Bvh` (tests, debugging).
     pub fn download(&self, gpu: &Gpu) -> Bvh {
-        Bvh { nodes: self.nodes.read(gpu), order: self.order.read(gpu), depth: self.depth }
+        let mut bvh = Bvh { nodes: self.nodes.read(gpu), order: self.order.read(gpu), depth: self.depth, ..Default::default() };
+        bvh.widen();
+        bvh
     }
 }

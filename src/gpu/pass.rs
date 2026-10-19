@@ -33,7 +33,7 @@ impl Pass {
                 label: Some(K::NAME),
                 layout: None,
                 module: &module,
-                entry_point: Some("main"),
+                entry_point: Some(K::ENTRY),
                 compilation_options: Default::default(),
                 cache: None,
             })

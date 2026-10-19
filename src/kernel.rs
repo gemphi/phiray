@@ -24,6 +24,10 @@ pub trait Kernel {
     /// Params block (must start with `n: u32, groups_x: u32`).
     type Params: bytemuck::Pod;
 
+    /// The compute entry point. `main` unless one source carries two
+    /// kernels (`Adapt` and `AdaptDilate` share `adapt.wgsl`).
+    const ENTRY: &'static str = "main";
+
     /// Full shader source.
     fn source() -> String {
         format!("{}{}", Dispatch::PRELUDE, Self::WGSL)
@@ -31,7 +35,7 @@ pub trait Kernel {
 
     /// Stable cache key (FNV-1a over name + source).
     fn key() -> u64 {
-        Self::NAME.bytes().chain(Self::WGSL.bytes()).fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        Self::NAME.bytes().chain(Self::ENTRY.bytes()).chain(Self::WGSL.bytes()).fold(0xcbf2_9ce4_8422_2325, |h, b| {
             (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
         })
     }

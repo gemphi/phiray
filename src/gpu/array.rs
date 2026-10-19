@@ -58,6 +58,15 @@ impl<T: Pod> GpuArray<T> {
     /// `items` over `chunks` arrays of at most `limit` bytes each; `None` if that
     /// is not enough. Returns the arrays and the items per chunk (index `i` is in
     /// chunk `i / per`); unused chunks hold one placeholder item.
+    /// Split `items` over `chunks` bindings, each holding `cut` items.
+    ///
+    /// The kernels turn an index into (binding, offset) with a division on
+    /// every node, face and vertex they touch. Making `cut` a power of two
+    /// so that becomes a shift was tried and **measured 21% slower** on
+    /// pose 26 (254s -> 308s at 64 samples), so it was reverted: the divide
+    /// is not what this traversal is spending its time on, and rounding the
+    /// capacity down would have cost a large scene a binding's worth of
+    /// room for nothing. `docs/render-fix-report.md` has the numbers.
     pub fn split(gpu: &Gpu, items: &[T], limit: u64, chunks: usize) -> Option<(Vec<Self>, u32)> {
         let cap = (limit / size_of::<T>() as u64).max(1) as usize;
         if items.len() > chunks * cap {
@@ -114,33 +123,66 @@ impl<T: Pod> GpuArray<T> {
         self.read_first(gpu, self.len)
     }
 
-    /// Copy back the first `count` items only. Empty when the device did not
-    /// drain within [`super::WAIT_LIMIT`] — the caller falls back.
+    /// The most one staging buffer is asked for at a time.
+    ///
+    /// A full frame's readback used to be a single allocation the size of
+    /// the whole buffer, and `BStill::read` makes **six** of them back to
+    /// back (pixels, display, radiance, albedo, normal, depth). On a
+    /// 1440 × 1440 frame that is hundreds of megabytes of host-visible
+    /// memory asked for at once, on top of the scene itself; the driver
+    /// refused one, wgpu handed back an invalid buffer, and `map_async`
+    /// panicked with *"Buffer with 'phiray.read' label is invalid"*.
+    /// Reading in bounded pieces asks for a constant amount instead.
+    const CHUNK: u64 = 32 << 20;
+
+    /// Copy back the first `count` items only. Empty when the device did
+    /// not drain within [`Gpu::patience`] — the caller falls back.
     pub fn read_first(&self, gpu: &Gpu, count: usize) -> Vec<T> {
-        let bytes = (count.min(self.len) * size_of::<T>()) as u64;
+        self.read_range(gpu, 0, count)
+    }
+
+    /// Copy back `count` items from `from`. The image buffer holds its
+    /// planes end to end — 31 of them (`Tracer::PX_WORDS`) — so a caller
+    /// that wants one plane near the end must not be made to read the
+    /// 248 MB in front of it (`Tracer::unconverged`).
+    pub fn read_range(&self, gpu: &Gpu, from: usize, count: usize) -> Vec<T> {
+        let from = from.min(self.len);
+        let count = count.min(self.len - from);
+        let skip = (from * size_of::<T>()) as u64;
+        let bytes = (count * size_of::<T>()) as u64;
         if bytes == 0 {
             return Vec::new();
         }
-        let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("phiray.read"),
-            size: bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut enc = gpu.device.create_command_encoder(&Default::default());
-        enc.copy_buffer_to_buffer(&self.buf, 0, &staging, 0, bytes);
-        gpu.queue.submit([enc.finish()]);
-        let slice = staging.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        if !gpu.wait_for(gpu.patience()) {
-            // The device did not drain in time. Return nothing rather than
-            // read an unmapped range (which panics) or wait forever: every
-            // caller treats a short read as "the GPU declined" and computes
-            // the same result on the CPU.
-            return Vec::new();
+        // wgpu maps on 4-byte boundaries, and `T` is a multiple of that in
+        // every array phiray reads, so a chunk is cut to whole items.
+        let item = size_of::<T>() as u64;
+        let step = (Self::CHUNK / item).max(1) * item;
+        let mut out: Vec<u8> = Vec::with_capacity(bytes as usize);
+        let mut at = 0u64;
+        while at < bytes {
+            let take = step.min(bytes - at);
+            let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("phiray.read"),
+                size: take,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_buffer(&self.buf, skip + at, &staging, 0, take);
+            gpu.queue.submit([enc.finish()]);
+            let slice = staging.slice(..);
+            slice.map_async(wgpu::MapMode::Read, |_| {});
+            if !gpu.wait_for(gpu.patience()) {
+                // The device did not drain in time. Return nothing rather
+                // than read an unmapped range (which panics) or wait for
+                // ever: every caller treats a short read as "the GPU
+                // declined" and computes the same result on the CPU.
+                return Vec::new();
+            }
+            out.extend_from_slice(&slice.get_mapped_range());
+            staging.unmap();
+            at += take;
         }
-        let out = bytemuck::cast_slice(&slice.get_mapped_range()).to_vec();
-        staging.unmap();
-        out
+        bytemuck::cast_slice(&out).to_vec()
     }
 }

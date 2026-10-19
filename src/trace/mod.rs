@@ -28,9 +28,14 @@ enum BTail {
     Taa,
     Smaa,
     Edge,
+    /// Adaptive Sampling: stage 0 tests convergence, stage 1 widens the
+    /// unconverged set by a pixel. Recorded on every sample; the kernel
+    /// returns at once unless the sample is a step boundary, so the pass
+    /// never has to be re-recorded for it.
+    Adapt,
 }
 
-pub use shader::{Edge, Fx, Preview, Preview4, Show, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
+pub use shader::{Adapt, AdaptDilate, Edge, Fx, Preview, Preview4, Show, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
 pub use outline::Outline;
 pub use instance::Instance;
 pub use mat::Mat;
@@ -38,14 +43,14 @@ pub use proc::{PROC_NORMALIZE, Proc};
 pub use srgb::Srgb;
 pub use scene::Scene;
 
-use crate::bvh::{Aabb, Node};
+use crate::bvh::{Aabb, Wide};
 use crate::gpu::{Gpu, GpuArray, Pass, Visibility};
 use crate::kernel::Dispatch;
 use crate::mode::Mode;
 
 pub struct Tracer {
     /// Each large array over `chunks()` bindings.
-    nodes: Vec<GpuArray<Node>>,
+    nodes: Vec<GpuArray<Wide>>,
     faces: Vec<GpuArray<[u32; 4]>>,
     verts: Vec<GpuArray<[f32; 8]>>,
     /// `[table…, atlas…, instances…]` (`Scene::table`, `Atlas::words`,
@@ -99,6 +104,10 @@ pub struct Tracer {
     aa: u32,
     /// What a new pose of the scene reuses (`pose.rs`).
     pose: Option<pose::Pose>,
+    /// Adaptive Sampling as Cycles resolved it: `[threshold, min samples,
+    /// step, on]`, stamped onto every camera (`Camera::adapt`). All zero —
+    /// off — until [`Self::set_adaptive`] says otherwise.
+    adapt: [f32; 4],
 }
 
 impl Tracer {
@@ -128,14 +137,34 @@ impl Tracer {
     /// first run on a driver with no shader cache can take seconds each).
     pub fn warm(gpu: &Gpu) -> Vec<(&'static str, f64)> {
         let timed = |name, compile: fn(&Gpu)| {
-            let at = std::time::Instant::now();
+            // `web_time`, not `std::time`: `Instant::now()` panics on
+            // wasm32-unknown-unknown, and warming the kernels is the first
+            // thing a browser build would do.
+            let at = web_time::Instant::now();
             compile(gpu);
             (name, at.elapsed().as_secs_f64() * 1000.0)
         };
+        // Preview goes LAST, and that ordering is load-bearing.
+        //
+        // These compiles hold the device's pipeline lock one at a time, and
+        // on this driver Material Preview takes **248 seconds** while the
+        // path tracer takes 145 ms (session log, 2026-10-18: `Solid 0,
+        // Preview 247997, Wire 3006, Trace 145`). Compiled second, as it
+        // was, Preview stood in front of every kernel anything else needed
+        // for four minutes: a render started in that window did not trace
+        // at all, it blocked on the lock, and its first sample timed at
+        // 143 s. Compiled last, Solid, Wire and Trace are all ready in
+        // about three seconds and nothing the user asked for waits behind
+        // a mode they may never open.
+        //
+        // Why Preview is three orders of magnitude slower than the tracer
+        // over the same bindings is its own question (`preview.wgsl` pulls
+        // in the procedural, Voronoi, Gabor and noise evaluators); this
+        // only stops it blocking everything else meanwhile.
         if Self::chunks_for(gpu) == 4 {
-            vec![timed("Solid", Pass::compile::<Solid4>), timed("Preview", Pass::compile::<Preview4>), timed("Wire", Pass::compile::<Wire4>), timed("Trace", Pass::compile::<Trace4>)]
+            vec![timed("Solid", Pass::compile::<Solid4>), timed("Wire", Pass::compile::<Wire4>), timed("Trace", Pass::compile::<Trace4>), timed("Preview", Pass::compile::<Preview4>)]
         } else {
-            vec![timed("Solid", Pass::compile::<Solid>), timed("Preview", Pass::compile::<Preview>), timed("Wire", Pass::compile::<Wire>), timed("Trace", Pass::compile::<Trace>)]
+            vec![timed("Solid", Pass::compile::<Solid>), timed("Wire", Pass::compile::<Wire>), timed("Trace", Pass::compile::<Trace>), timed("Preview", Pass::compile::<Preview>)]
         }
     }
 
@@ -278,6 +307,9 @@ impl Tracer {
             target: Self::SAMPLES,
             aa: taa::SAMPLES,
             pose: Some(pose),
+            // Off until the render path resolves the scene's rows
+            // (`Tracer::set_adaptive`).
+            adapt: [0.0; 4],
         })
     }
 
@@ -421,11 +453,51 @@ impl Tracer {
         if self.outlined() {
             tail.push((BTail::Edge, 0, n));
         }
+        if self.adapt[3] != 0.0 {
+            tail.push((BTail::Adapt, 0, n));
+            tail.push((BTail::Adapt, 1, n));
+        }
         tail
     }
 
     /// Refine a still view to `n` samples (Blender's viewport / render
     /// sample count). Takes effect from the next view.
+    /// Adaptive Sampling, already resolved against Cycles' automatic
+    /// rules (`BAdaptive::of` in phiber): `[threshold, min samples, step,
+    /// on]`. Changing it changes whether the tail carries the convergence
+    /// check, so the pass is recorded again on the next sample.
+    /// Pixels Adaptive Sampling has NOT settled, or `None` when it is off
+    /// or the device declined the readback.
+    ///
+    /// Cycles stops a render when every pixel has converged rather than
+    /// grinding to the sample count, and this is what lets phiber do the
+    /// same. Without it a frame whose floor and background settled at
+    /// sample 80 still ran to 2048 — the samples cost almost nothing by
+    /// then, but the render did not *end*, which is what a person
+    /// actually waits for.
+    ///
+    /// Reads one plane (30n..31n), not the whole image: the buffer is 31
+    /// words a pixel, so a naive read would drag a quarter of a gigabyte
+    /// back for one flag each (`GpuArray::read_range`).
+    pub fn unconverged(&self, gpu: &Gpu) -> Option<u32> {
+        if self.adapt[3] == 0.0 {
+            return None;
+        }
+        let n = (self.size.0 * self.size.1) as usize;
+        let px = self.px.as_ref()?;
+        let flags = px.read_range(gpu, 30 * n, n);
+        // A short read means the device declined; say nothing rather than
+        // claim a converged frame and stop early.
+        (flags.len() == n).then(|| flags.iter().filter(|f| **f == 0).count() as u32)
+    }
+
+    pub fn set_adaptive(&mut self, adapt: [f32; 4]) {
+        if self.adapt != adapt {
+            self.adapt = adapt;
+            self.pass.clear();
+        }
+    }
+
     pub fn set_samples(&mut self, n: u32) {
         self.target = n.max(1);
     }
@@ -463,6 +535,7 @@ impl Tracer {
         cam.insts = self.insts;
         cam.frame = 0;
         cam.slice = [0; 4];
+        cam.adapt = self.adapt;
         // The anti-aliasing count is part of the view: a new count starts
         // the samples over (`SceneState`: `reset_taa` when `samples_len`
         // changes).
@@ -532,6 +605,10 @@ impl Tracer {
                     BTail::Taa => self.pass.add::<Taa>(gpu, n, cam, &[px.buffer()]),
                     BTail::Smaa => self.pass.add::<Smaa>(gpu, n, cam, &[px.buffer(), self.smaa.buffer()]),
                     BTail::Edge => self.pass.add::<Edge>(gpu, n, cam, &[px.buffer(), self.class.buffer()]),
+                    BTail::Adapt => match stage {
+                        0 => self.pass.add::<Adapt>(gpu, n, cam, &[px.buffer()]),
+                        _ => self.pass.add::<AdaptDilate>(gpu, n, cam, &[px.buffer()]),
+                    },
                 };
             }
             self.px = Some(px);
@@ -568,6 +645,33 @@ impl Tracer {
         Some((self.frame, self.frame + 1 >= self.samples()))
     }
 
+    /// Every byte this tracer holds on the device: the scene (tree,
+    /// faces, vertices, the data table with the texture atlas and the
+    /// instance records) and the image buffer, plus the small fixed
+    /// tables. This is the figure the render window's `Mem:` should show.
+    ///
+    /// Blender's `Mem:` is the memory the *renderer* is holding, which on
+    /// a scene like this is overwhelmingly geometry and textures on the
+    /// card. Reporting only the host-side preview buffers read `8M` on a
+    /// 2.4-million-triangle scene, which told the user nothing.
+    pub fn bytes(&self) -> u64 {
+        let of = |n: usize, each: usize| (n * each) as u64;
+        let mut total = 0u64;
+        for a in &self.nodes {
+            total += of(a.len(), std::mem::size_of::<Wide>());
+        }
+        for a in &self.faces {
+            total += of(a.len(), std::mem::size_of::<[u32; 4]>());
+        }
+        for a in &self.verts {
+            total += of(a.len(), std::mem::size_of::<[f32; 8]>());
+        }
+        total += of(self.data.len(), 4);
+        total += self.px.as_ref().map_or(0, |px| of(px.len(), 4));
+        total += of(self.blank.len() + self.noise.len() + self.smaa.len() + self.class.len(), 4);
+        total
+    }
+
     /// Words per pixel in the image buffer: the packed display pixel, then
     /// the scene-linear sums (n..4n), the shown value after the view transform
     /// (4n..7n), the denoiser's albedo / normal / depth guides (7n..14n), two
@@ -577,7 +681,11 @@ impl Tracer {
     /// film (24n..25n), and the selection outline's prepass — the instance
     /// under the pixel plus one (25n..26n, `outline_store`). See
     /// `util.wgsl`'s `emit` and `guide`, and `denoise.wgsl`.
-    pub(crate) const PX_WORDS: usize = 26;
+    /// 26n..29n is Adaptive Sampling's half image, 29n..30n the raw
+    /// converged flag, 30n..31n the flag after the dilation — the one the
+    /// tracer obeys — and 31n..32n the samples THIS pixel has taken
+    /// (Cycles' `pass_sample_count`, `util.wgsl`'s `adapt_count`).
+    pub(crate) const PX_WORDS: usize = 32;
 
     /// The most pixels one image may hold on `gpu`. The image is one
     /// binding of `PX_WORDS` words a pixel, and a device caps a binding —
@@ -663,18 +771,24 @@ impl Tracer {
     pub fn show(&mut self, gpu: &Gpu, linear: &[[f32; 3]]) -> bool {
         let (w, h) = self.size;
         let n = (w as usize) * (h as usize);
-        let (Some(px), Some(cam)) = (self.px.as_mut(), self.last) else { return false };
         if n == 0 {
             return false;
         }
         // The sums are `k` times the mean, so what goes in is scaled by the
         // sample count the buffer is at — otherwise showing a composited
         // image would darken it by `1 / k`.
-        let k = (self.frame + 1) as f32;
+        //
+        // Per pixel, for the same reason the readbacks are: with Adaptive
+        // Sampling two pixels have taken different numbers of samples, so
+        // one global `k` would store the wrong sum for most of them. Read
+        // BEFORE the image is borrowed mutably below — `counts` reads it.
+        let k = self.counts(gpu, n);
+        let (Some(px), Some(cam)) = (self.px.as_mut(), self.last) else { return false };
         let mut words = Vec::with_capacity(3 * n);
         for i in 0..n {
             let c = linear.get(i).copied().unwrap_or([0.0; 3]);
-            words.extend(c.iter().map(|v| (v * k).to_bits()));
+            let ki = k.get(i).copied().unwrap_or(1.0);
+            words.extend(c.iter().map(|v| (v * ki).to_bits()));
         }
         if !px.write_at(gpu, n, &words) {
             return false;
@@ -692,13 +806,37 @@ impl Tracer {
         true
     }
 
+    /// Samples each pixel actually took (`util.wgsl`'s `adapt_count`).
+    ///
+    /// Without Adaptive Sampling every pixel took `frame + 1` of them and
+    /// this is uniform; with it, a settled pixel stopped early and the
+    /// mean must be taken over ITS count. Dividing by the frame number
+    /// instead darkened settled pixels by the fraction of the render they
+    /// sat out — the quality regression of 2026-10-19.
+    fn counts(&self, gpu: &Gpu, n: usize) -> Vec<f32> {
+        let fallback = || vec![(self.frame + 1) as f32; n];
+        if self.adapt[3] == 0.0 {
+            return fallback();
+        }
+        let Some(px) = self.px.as_ref() else { return fallback() };
+        let raw = px.read_range(gpu, 31 * n, n);
+        if raw.len() != n {
+            return fallback();
+        }
+        raw.iter().map(|c| (*c).max(1) as f32).collect()
+    }
+
     /// Linear radiance per pixel (mean of the samples so far), before tone mapping.
     pub fn radiance(&self, gpu: &Gpu) -> Vec<[f32; 3]> {
         let n = (self.size.0 * self.size.1) as usize;
         let words = self.px.as_ref().map(|o| o.read_first(gpu, 4 * n)).unwrap_or_default();
         // Words n..4n: the scene-linear sums (4n..7n hold the display sums).
-        let k = (self.frame + 1) as f32;
-        words[n.min(words.len())..].chunks_exact(3).map(|c| [0, 1, 2].map(|i| f32::from_bits(c[i]) / k)).collect()
+        let k = self.counts(gpu, n);
+        words[n.min(words.len())..]
+            .chunks_exact(3)
+            .enumerate()
+            .map(|(p, c)| [0, 1, 2].map(|i| f32::from_bits(c[i]) / k.get(p).copied().unwrap_or(1.0)))
+            .collect()
     }
 
     /// The display-space image (the view transform applied, mean of the
@@ -743,14 +881,15 @@ impl Tracer {
     pub fn depth(&self, gpu: &Gpu) -> Vec<f32> {
         let n = (self.size.0 * self.size.1) as usize;
         let words = self.px.as_ref().map(|o| o.read_first(gpu, 14 * n)).unwrap_or_default();
-        let k = (self.frame + 1) as f32;
+        let k = self.counts(gpu, n);
         words[(13 * n).min(words.len())..]
             .iter()
             .take(n)
-            .map(|w| {
+            .enumerate()
+            .map(|(p, w)| {
                 // Misses record -1 a sample, so a pixel that never hit
                 // anything sums to -k.
-                let mean = f32::from_bits(*w) / k;
+                let mean = f32::from_bits(*w) / k.get(p).copied().unwrap_or(1.0);
                 if mean <= 0.0 { 1.0e10 } else { mean }
             })
             .collect()
@@ -760,8 +899,13 @@ impl Tracer {
     fn guide3(&self, gpu: &Gpu, start: usize) -> Vec<[f32; 3]> {
         let n = (self.size.0 * self.size.1) as usize;
         let words = self.px.as_ref().map(|o| o.read_first(gpu, (start + 3) * n)).unwrap_or_default();
-        let k = (self.frame + 1) as f32;
-        words[(start * n).min(words.len())..].chunks_exact(3).take(n).map(|c| [0, 1, 2].map(|i| f32::from_bits(c[i]) / k)).collect()
+        let k = self.counts(gpu, n);
+        words[(start * n).min(words.len())..]
+            .chunks_exact(3)
+            .take(n)
+            .enumerate()
+            .map(|(p, c)| [0, 1, 2].map(|i| f32::from_bits(c[i]) / k.get(p).copied().unwrap_or(1.0)))
+            .collect()
     }
 
     /// The current image (RGBA8).

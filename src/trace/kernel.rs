@@ -351,6 +351,11 @@ pub struct Camera {
     pub outline_active: [f32; 4],
     /// `theme.colors.transform` — an object being moved.
     pub outline_move: [f32; 4],
+    /// Adaptive Sampling, resolved as Cycles resolves it
+    /// (`BAdaptive::of`): `[threshold, min samples, step, on]`. `on` 0
+    /// leaves every pixel sampled to the end, which is what phiray did
+    /// before it had this at all.
+    pub adapt: [f32; 4],
     pub lights: [Light; LIGHTS],
 }
 
