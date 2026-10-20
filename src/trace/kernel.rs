@@ -482,7 +482,7 @@ impl Look {
     }
 }
 
-pub const LIGHTS: usize = 16;
+pub const LIGHTS: usize = 32;
 
 /// Pack linear RGB into Radiance RGBE: three 8-bit mantissas and one shared
 /// exponent, biased by 128 (`IMB_radiance_hdr.cc`).
