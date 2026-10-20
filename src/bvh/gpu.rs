@@ -100,8 +100,6 @@ impl GpuBvh {
 
     /// Read back as a CPU `Bvh` (tests, debugging).
     pub fn download(&self, gpu: &Gpu) -> Bvh {
-        let mut bvh = Bvh { nodes: self.nodes.read(gpu), order: self.order.read(gpu), depth: self.depth, ..Default::default() };
-        bvh.widen();
-        bvh
+        Bvh { nodes: self.nodes.read(gpu), order: self.order.read(gpu), depth: self.depth }
     }
 }

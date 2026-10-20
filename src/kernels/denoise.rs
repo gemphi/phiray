@@ -42,7 +42,9 @@ pub struct DenoiseParams {
     /// true sums, not to a filtered copy of them (`Tracer::denoise_shown`).
     pub keep: u32,
     /// How much a disagreement costs, as `1 / sigma`, for normal, albedo and
-    /// depth; the fourth component is 1 / sample count.
+    /// depth; the fourth is padding. (It was 1 / the frame's sample count,
+    /// which is not a pixel's divisor once Adaptive Sampling stops pixels
+    /// early; the kernel reads each pixel's own count now.)
     pub strength: [f32; 4],
     /// `Camera::view` — the colour management the final pass applies.
     pub view: [f32; 4],

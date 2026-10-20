@@ -56,6 +56,30 @@ impl Kernel for AdaptDilate {
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/adapt.wgsl"));
 }
 
+/// The unsettled pixels' list (`gather.wgsl`): its count zeroed, so
+/// [`AdaptGather`] can append to it.
+pub struct AdaptClear;
+
+impl Kernel for AdaptClear {
+    const NAME: &'static str = "adapt_clear";
+    const ENTRY: &'static str = "gather_clear";
+    const BINDS: &'static [Bind] = &[Bind::Write];
+    type Params = Camera;
+    const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/gather.wgsl"));
+}
+
+/// The pixels Adaptive Sampling has not settled, packed into a list the
+/// next sample traces instead of the whole image (`gather.wgsl`).
+pub struct AdaptGather;
+
+impl Kernel for AdaptGather {
+    const NAME: &'static str = "adapt_gather";
+    const ENTRY: &'static str = "gather";
+    const BINDS: &'static [Bind] = &[Bind::Write];
+    type Params = Camera;
+    const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/gather.wgsl"));
+}
+
 /// Workbench's anti-aliasing gather (`taa.wgsl`): one sample's image
 /// filtered into the running sums and resolved, after each Solid or
 /// Wireframe dispatch. It binds the image alone.

@@ -12,21 +12,27 @@ fn put3(base: u32, i: u32, v: vec3<f32>) {
     px[o + 2u] = bitcast<u32>(v.z);
 }
 
-// Means over the samples taken so far; `strength.w` is 1 / sample count.
+// Means over the samples THIS pixel took (`util.wgsl`'s `adapt_count`, the
+// word `emit` keeps at `31n + i`). With Adaptive Sampling a settled pixel
+// stops early, so the frame's count (`strength.w`, 1 / samples) is not its
+// divisor: dividing a pixel that settled at 40 of 256 by 256 darkened it
+// sixfold, and the filter spread those dark pixels into blotches over the
+// whole frame — the broken 256-sample pose 23 of 2026-10-20.
+fn inv_n(i: u32) -> f32 { return 1.0 / f32(max(px[31u * p.n + i], 1u)); }
 //
 // Everything here is display-space, because that is what the tracer averages
 // (`util.wgsl`'s `emit`) and therefore what `pixels` shows: the mean of the
 // transformed samples, not the transform of the mean. Filtering scene-linear
 // values and transforming once at the end would be a different image
 // altogether — brighter wherever one sample was very bright.
-fn albedo_of(i: u32) -> vec3<f32> { return srgb(v3_at(7u * p.n, i) * p.strength.w); }
+fn albedo_of(i: u32) -> vec3<f32> { return srgb(v3_at(7u * p.n, i) * inv_n(i)); }
 fn normal_of(i: u32) -> vec3<f32> { return normalize(v3_at(10u * p.n, i) + vec3<f32>(1e-9)); }
-fn depth_of(i: u32) -> f32 { return f_at(13u * p.n + i) * p.strength.w; }
+fn depth_of(i: u32) -> f32 { return f_at(13u * p.n + i) * inv_n(i); }
 
 // Shown radiance with the albedo divided out, so what is filtered is the
 // lighting and not the texture printed on it.
 fn demodulated(i: u32) -> vec3<f32> {
-    return v3_at(1u * p.n, i) * p.strength.w / max(albedo_of(i), vec3<f32>(0.05));
+    return v3_at(1u * p.n, i) * inv_n(i) / max(albedo_of(i), vec3<f32>(0.05));
 }
 
 fn read_in(i: u32) -> vec3<f32> {
@@ -78,13 +84,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // A finished render's it replaces the linear sums, so `Tracer::radiance`
     // — and an EXR — get the denoised image too; a refining viewport
     // (`p.keep`) keeps its sums, so the next sample lands on the truth.
-    // `strength.w` is 1 / samples.
-    if (p.keep == 0u) { put3(1u * p.n, i, lin / max(p.strength.w, 1e-9)); }
+    // Back to a sum over this pixel's own samples.
+    let k = inv_n(i);
+    if (p.keep == 0u) { put3(1u * p.n, i, lin / k); }
     // Then the view transform once, and the grid overlay the tracer
     // accumulated, exactly as `emit` composes an un-denoised pixel.
-    let cov = f_at(23u * p.n + i) * p.strength.w;
-    let grid = v3_at(20u * p.n, i) * p.strength.w;
-    let shown = view_transform_of(lin, p.view) * (1.0 - cov) + grid;
+    let cov = f_at(23u * p.n + i) * k;
+    let grid = v3_at(20u * p.n, i) * k;
+    // `lin` is a mean over every sample; the light is over the ones that
+    // met something (`emit`), so it is scaled up by the share that did.
+    let met = max(1.0 - f_at(33u * p.n + i) * k, 1e-6);
+    let shown = view_transform_of(lin / met, p.view) * (1.0 - cov) + grid;
     put3(4u * p.n, i, shown);
-    px[i] = pack(shown, f_at(24u * p.n + i) * p.strength.w);
+    px[i] = pack(shown, f_at(24u * p.n + i) * k);
 }

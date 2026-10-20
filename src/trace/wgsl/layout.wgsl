@@ -1,9 +1,4 @@
 struct Node { lo: vec3<f32>, li: u32, hi: vec3<f32>, ri: u32 }
-// The four-wide tree the kernel walks (`bvh/wide.rs`): the children's
-// bounds as x/y/z lanes so one slab test does all four, then the child
-// words (`c`: a wide index, or LEAF | start, with INST in the top tree)
-// and the leaf ends (`e`). An empty slot is an inverted box.
-struct Wide { lox: vec4<f32>, loy: vec4<f32>, loz: vec4<f32>, hix: vec4<f32>, hiy: vec4<f32>, hiz: vec4<f32>, c: vec4<u32>, e: vec4<u32> }
 struct Tri {
     a: vec3<f32>, rough: f32, na: vec3<f32>, trans: f32,
     b: vec3<f32>, metal: f32, nb: vec3<f32>, ior: f32,

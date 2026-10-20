@@ -251,7 +251,9 @@ pub struct Camera {
     /// frame and the frame's `[w, h]` — the rays, the pixel size and the
     /// sky's sweep are the frame's. All zero: the image is the frame.
     pub tile: [u32; 4],
-    /// Film: `[transparent, _, _, _]`. With `transparent` set (Blender's
+    /// Film: `[transparent, world, _, _]`. `world` set: a ray that meets
+    /// nothing is the world's radiance (`env`), averaged as light, not the
+    /// theme's sky laid over. With `transparent` set (Blender's
     /// Film ▸ Transparent, `film_transparent`), a camera ray that meets
     /// nothing leaves its pixel black with alpha 0 instead of the sky, so a
     /// PNG or EXR with an alpha channel comes out with the background cut
@@ -356,7 +358,64 @@ pub struct Camera {
     /// leaves every pixel sampled to the end, which is what phiray did
     /// before it had this at all.
     pub adapt: [f32; 4],
+    /// Light Paths ▸ Clamping (`cycles.sample_clamp_direct`, `_indirect`):
+    /// `[direct, indirect, 0, 0]`, `0` for no clamp (`shade.wgsl`'s
+    /// `clamp_light`).
+    pub limit: [f32; 4],
+    /// Light Paths ▸ Max Bounces past Diffuse (`cycles.max_bounces`,
+    /// `transparent_max_bounces`, `transmission_bounces`,
+    /// `glossy_bounces`): `[total, transparent, transmission, glossy]`,
+    /// **each plus one**, so a zeroed Camera keeps the fixed limits phiray
+    /// had before these were read (eight see-through events, glossy on).
+    /// [`Camera::with_depth`] writes them from the counts.
+    pub depth: [u32; 4],
+    /// Film ▸ Pixel Filter and Light Paths ▸ Caustics, as Cycles takes them
+    /// (`scene/film.cpp`, `scene/integrator.cpp`): `[filter, width,
+    /// filter glossy, caustics]`. `filter` is 1 Box, 2 Gaussian, 3
+    /// Blackman-Harris, and **0 keeps phiray's own behaviour** — a one-pixel
+    /// box, the 0.3 roughness floor on secondary hits, caustics on — so a
+    /// zeroed Camera renders as it always did. `caustics` is bit 0
+    /// Reflective, bit 1 Refractive. [`Camera::with_integrator`] writes it.
+    pub integrator: [f32; 4],
     pub lights: [Light; LIGHTS],
+}
+
+impl Camera {
+    /// Max Bounces as Blender's panel holds them: Total, Transparent,
+    /// Transmission and Glossy (Diffuse is [`Camera::bounces`]).
+    pub fn with_depth(mut self, total: u32, transparent: u32, transmission: u32, glossy: u32) -> Self {
+        self.depth = [total + 1, transparent + 1, transmission + 1, glossy + 1];
+        self
+    }
+
+    /// Film ▸ Pixel Filter (`filter` and its `width` in pixels), Light
+    /// Paths ▸ Caustics ▸ Filter Glossy, Reflective and Refractive
+    /// (`Camera::integrator`).
+    pub fn with_integrator(mut self, filter: PixelFilter, width: f32, filter_glossy: f32, reflective: bool, refractive: bool) -> Self {
+        let caustics = u32::from(reflective) | (u32::from(refractive) << 1);
+        self.integrator = [filter as u32 as f32, width.max(0.01), filter_glossy.max(0.0), caustics as f32];
+        self
+    }
+}
+
+/// Film ▸ Pixel Filter ▸ Type (`cycles.pixel_filter_type`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PixelFilter {
+    Box = 1,
+    Gaussian = 2,
+    #[default]
+    BlackmanHarris = 3,
+}
+
+impl PixelFilter {
+    /// The RNA identifier, as the panel and the file name it.
+    pub fn of(name: &str) -> Self {
+        match name {
+            "BOX" => Self::Box,
+            "GAUSSIAN" => Self::Gaussian,
+            _ => Self::BlackmanHarris,
+        }
+    }
 }
 
 /// Blender's view transforms (`view_settings.view_transform`).

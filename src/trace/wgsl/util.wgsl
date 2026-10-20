@@ -95,12 +95,18 @@ fn adapt_settled(i: u32) -> bool {
 // weight, so it estimates the same mean from half the samples.
 fn adapt_is_class_a(frame: u32) -> bool { return (frame & 1u) == 1u; }
 
-fn emit(i: u32, lin: vec3<f32>, over: vec4<f32>, cover: f32) {
+// `missed` is 1 for a sample that met nothing — the theme's sky or a
+// transparent film's nothing — and 0 for one that met a surface or the
+// world's image: the radiance sums average over the second kind alone.
+fn emit(i: u32, lin: vec3<f32>, over: vec4<f32>, cover: f32, missed: f32) {
     let a = p.n + 3u * i;
     let g = 20u * p.n + 3u * i;
     let gc = 23u * p.n + i;
     let fc = 24u * p.n + i;
+    let mc = 33u * p.n + i;
     let keep = p.frame > 0u;
+    let gone = select(0.0, bitcast<f32>(px[mc]), keep) + missed;
+    px[mc] = bitcast<u32>(gone);
     let cn = adapt_count(i);
     let taken = select(0u, px[cn], keep) + 1u;
     px[cn] = taken;
@@ -124,7 +130,13 @@ fn emit(i: u32, lin: vec3<f32>, over: vec4<f32>, cover: f32) {
         px[x + 1u] = bitcast<u32>(half.y);
         px[x + 2u] = bitcast<u32>(half.z);
     }
-    let shown = view_transform(l / k) * (1.0 - cov / k) + gs / k;
+    // The light is the mean over the samples that met something, and the
+    // background is laid over by the share that did not (`cov`). Dividing
+    // by every sample counted each miss twice — as no light AND as
+    // background — so a pixel half on an object came out a quarter lit:
+    // every silhouette was a dark rim, and under a transparent film the
+    // rim was in the colour itself, so it showed over any backdrop.
+    let shown = view_transform(l / max(k - gone, 1.0)) * (1.0 - cov / k) + gs / k;
     let b = 4u * p.n + 3u * i;
     px[b] = bitcast<u32>(shown.x);
     px[b + 1u] = bitcast<u32>(shown.y);

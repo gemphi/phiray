@@ -8,7 +8,7 @@
 
 use super::instance::Instance;
 use super::scene::Scene;
-use crate::bvh::{Aabb, Bvh, Node, Wide, WIDTH};
+use crate::bvh::{Aabb, Bvh, Node};
 use rayon::prelude::*;
 
 /// Marks a top-tree leaf, whose range is instance slots, not faces.
@@ -34,7 +34,7 @@ impl Trees {
         let blas: Vec<Bvh> = scene
             .insts
             .par_iter()
-            .map(|inst| if inst.faces().is_empty() { Bvh::default() } else { Bvh::build_compact(&boxes[inst.faces()], LEAF) })
+            .map(|inst| if inst.faces().is_empty() { Bvh::default() } else { Bvh::build_sah(&boxes[inst.faces()], LEAF) })
             .collect();
         let mut order: Vec<u32> = (0..scene.len() as u32).collect();
         for (inst, tree) in scene.insts.iter().zip(&blas) {
@@ -61,11 +61,11 @@ impl Trees {
         self.blas
             .iter()
             .map(|tree| {
-                if tree.wide.is_empty() {
+                if tree.nodes.is_empty() {
                     return u32::MAX;
                 }
                 let root = at;
-                at += tree.wide.len() as u32;
+                at += tree.nodes.len() as u32;
                 root
             })
             .collect()
@@ -81,47 +81,39 @@ impl Trees {
             .map(|(i, (inst, tree))| (i as u32, inst.world_box(tree.nodes[0].bounds())))
             .collect();
         let boxes: Vec<Aabb> = placed.iter().map(|(_, b)| *b).collect();
-        self.tlas = Bvh::build_compact(&boxes, 1);
+        self.tlas = Bvh::build_sah(&boxes, 1);
         self.inst_order = self.tlas.order.iter().map(|&slot| placed[slot as usize].0).collect();
     }
 
-    /// The whole node array for the kernel — the four-wide view
-    /// (`bvh::Wide`), since that is what the kernel walks: the top tree in
-    /// its slots, its leaves flagged and ranging over instance slots, then
-    /// each instance's tree with its children and face slots shifted into
-    /// place. The binary trees stay as they are; this is a view of them.
-    pub fn nodes(&self, insts: &[Instance]) -> Vec<Wide> {
-        let mut out: Vec<Wide> = self
+    /// The whole node array for the kernel: the top tree in its slots, its
+    /// leaves flagged and ranging over instance slots, then each instance's
+    /// tree with its children and face slots shifted into place.
+    pub fn nodes(&self, insts: &[Instance]) -> Vec<Node> {
+        let mut out: Vec<Node> = self
             .tlas
-            .wide
+            .nodes
             .iter()
-            .map(|w| {
-                let mut w = *w;
-                for k in 0..WIDTH {
-                    if w.filled(k) && w.is_leaf_child(k) {
-                        w.c[k] |= INST;
-                    }
+            .map(|n| {
+                let mut n = *n;
+                if n.is_leaf() {
+                    n.lo.i |= INST;
                 }
-                w
+                n
             })
             .collect();
-        out.resize(self.tlas_slots(), Wide::default());
+        out.resize(self.tlas_slots(), Node::default());
         for (inst, tree) in insts.iter().zip(&self.blas) {
             let base = out.len() as u32;
-            out.extend(tree.wide.iter().map(|w| {
-                let mut w = *w;
-                for k in 0..WIDTH {
-                    if !w.filled(k) {
-                        continue;
-                    }
-                    if w.is_leaf_child(k) {
-                        w.c[k] = ((w.c[k] & !crate::bvh::LEAF) + inst.face_lo) | crate::bvh::LEAF;
-                        w.e[k] += inst.face_lo;
-                    } else {
-                        w.c[k] += base;
-                    }
+            out.extend(tree.nodes.iter().map(|n| {
+                let mut n = *n;
+                if n.is_leaf() {
+                    n.lo.i = (n.lo.index() + inst.face_lo) | crate::bvh::LEAF;
+                    n.hi.i += inst.face_lo;
+                } else {
+                    n.lo.i += base;
+                    n.hi.i += base;
                 }
-                w
+                n
             }));
         }
         out
@@ -129,7 +121,7 @@ impl Trees {
 
     /// The top tree's slots alone, as `nodes` lays them out: what a move
     /// uploads.
-    pub fn tlas_nodes(&self) -> Vec<Wide> {
+    pub fn tlas_nodes(&self) -> Vec<Node> {
         self.nodes(&[])
     }
 
@@ -173,7 +165,7 @@ impl Trees {
         if boxes.is_empty() {
             return Vec::new();
         }
-        let fresh = Bvh::build_compact(boxes, LEAF);
+        let fresh = Bvh::build_sah(boxes, LEAF);
         let order = fresh.order.clone();
         self.blas[k] = Bvh { order: (0..boxes.len() as u32).collect(), ..fresh };
         order
@@ -212,22 +204,19 @@ mod tests {
         let nodes = trees.nodes(&s.insts);
         let t = trees.tlas_slots();
         assert_eq!((trees.tlas.nodes.len(), t), (3, 3));
-        let filled = |w: &Wide| (0..WIDTH).filter(|&k| w.filled(k)).collect::<Vec<_>>();
-        assert!(nodes[..t].iter().all(|w| filled(w).iter().all(|&k| !w.is_leaf_child(k) || w.c[k] & INST != 0)), "top leaves are flagged");
+        assert!(nodes[..t].iter().filter(|n| n.is_leaf()).all(|n| n.lo.i & INST != 0), "top leaves are flagged");
         let roots = trees.roots();
         assert_eq!(roots[0], t as u32, "the first instance's tree follows the top tree's slots");
-        assert_eq!(roots[1], t as u32 + trees.blas[0].wide.len() as u32);
+        assert_eq!(roots[1], t as u32 + trees.blas[0].nodes.len() as u32);
         // Every instance leaf ranges within its instance's faces.
         for (k, inst) in s.insts.iter().enumerate() {
-            let (lo, hi) = (roots[k] as usize, roots[k] as usize + trees.blas[k].wide.len());
-            for w in &nodes[lo..hi] {
-                for j in filled(w) {
-                    if w.is_leaf_child(j) {
-                        let (a, b) = ((w.c[j] & !(crate::bvh::LEAF | INST)) as usize, w.e[j] as usize);
-                        assert!(a >= inst.faces().start && b <= inst.faces().end, "{a}..{b} in {:?}", inst.faces());
-                    } else {
-                        assert!((w.c[j] as usize) >= lo && (w.c[j] as usize) < hi, "children stay in the tree");
-                    }
+            let (lo, hi) = (roots[k] as usize, roots[k] as usize + trees.blas[k].nodes.len());
+            for n in &nodes[lo..hi] {
+                if n.is_leaf() {
+                    let (a, b) = ((n.lo.i & !(crate::bvh::LEAF | INST)) as usize, n.hi.i as usize);
+                    assert!(a >= inst.faces().start && b <= inst.faces().end, "{a}..{b} in {:?}", inst.faces());
+                } else {
+                    assert!((n.lo.i as usize) >= lo && (n.hi.i as usize) < hi, "children stay in the tree");
                 }
             }
         }
@@ -251,7 +240,7 @@ mod tests {
         let after = trees.nodes(&s.insts);
         let t = trees.tlas_slots();
         assert_eq!(&before[t..], &after[t..], "the instance trees are untouched");
-        assert!((0..WIDTH).any(|k| after[0].filled(k) && after[0].hiy[k] >= 50.0), "the root reaches the moved cube");
+        assert!(after[0].bounds().hi[1] >= 50.0, "the root reaches the moved cube");
         assert_eq!((trees.tlas_nodes().len(), &trees.tlas_nodes()[..], &after[..t]), (t, &after[..t], &after[..t]));
     }
 }

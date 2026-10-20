@@ -6,6 +6,7 @@
 //! (`depth + 1`, ping-pong on the GPU), so no atomics are needed.
 
 mod build;
+mod sah;
 mod gpu;
 mod kernels;
 mod node;
@@ -13,7 +14,6 @@ mod radix;
 mod shape;
 mod sort;
 mod spread;
-mod wide;
 
 pub use build::{Bvh, Link};
 pub use gpu::GpuBvh;
@@ -22,7 +22,6 @@ pub use radix::{BINS, Clear, Count, DIGIT, Offset, PASSES, RadixParams, Scatter,
 pub use sort::GpuSort;
 pub use spread::Spread;
 pub use node::{Aabb, Half, Node, STACK, morton};
-pub use wide::{WIDTH, Wide};
 pub(crate) use node::LEAF;
 
 /// 30-bit Morton code of a point normalised to `[0, 1]` (the WGSL `Morton` kernel matches this).

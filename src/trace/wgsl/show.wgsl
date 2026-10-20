@@ -26,14 +26,17 @@ fn three(a: u32) -> vec3<f32> {
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = item(gid, p.groups_x);
     if (i >= p.n) { return; }
-    // `p.frame` is the sample the sums hold, so the mean is over `frame + 1`
-    // — exactly as `emit` divides.
-    let k = f32(p.frame + 1u);
+    // The mean over the samples this pixel took — exactly as `emit`
+    // divides (`adapt_count`): a pixel Adaptive Sampling settled early has
+    // fewer than `frame + 1`.
+    let k = f32(max(px[31u * p.n + i], 1u));
     let l = three(p.n + 3u * i);
     let gs = three(20u * p.n + 3u * i);
     let cov = bitcast<f32>(px[23u * p.n + i]);
     let film = bitcast<f32>(px[24u * p.n + i]);
-    let shown = view_transform_of(l / k, p.view) * (1.0 - cov / k) + gs / k;
+    // Light over the samples that met something (`emit`).
+    let gone = bitcast<f32>(px[33u * p.n + i]);
+    let shown = view_transform_of(l / max(k - gone, 1.0), p.view) * (1.0 - cov / k) + gs / k;
     let b = 4u * p.n + 3u * i;
     px[b] = bitcast<u32>(shown.x);
     px[b + 1u] = bitcast<u32>(shown.y);

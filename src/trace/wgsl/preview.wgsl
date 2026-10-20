@@ -76,21 +76,10 @@ fn prefiltered(d: vec3<f32>, rough: f32) -> vec3<f32> {
     return mix(a, b, t);
 }
 
-// The split-sum's second term — how much of a prefiltered reflection a
-// surface of `f0` and `rough` shows at `nv` — in Karis's analytic fit.
-fn env_brdf(f0: vec3<f32>, rough: f32, nv: f32) -> vec3<f32> {
-    let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
-    let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
-    let r = rough * c0 + c1;
-    let a004 = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;
-    let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
-    return f0 * ab.x + vec3<f32>(ab.y);
-}
-
 // Direct light from the lamps, each shadowed over its shape
 // (`shadow.wgsl`: EEVEE aims its shadow ray at a point on the light, so a
 // Radius or a Sun Angle gives a penumbra) — every lamp, no pick among
-// them (`lights` draws four at random; nothing here is drawn).
+// them (`lamp_query` draws one by power; nothing here is drawn).
 fn preview_lamps(s: Surf) -> vec3<f32> {
     var c = vec3<f32>(0.0);
     if (p.count == 0u) {
@@ -190,16 +179,18 @@ fn preview_lobe(h: Hit, m: u32, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, f
     let v = -d;
     let nv = max(dot(n, v), 1e-4);
     let tw = t.trans * (1.0 - metal);
-    var f0 = mix(vec3<f32>(0.04), base, metal);
-    if (tw > 0.0) { f0 = vec3<f32>(pow((t.ior - 1.0) / (t.ior + 1.0), 2.0)); }
+    let fd = dielectric_f0(t.ior);
+    let f0 = mix(fd, base, metal);
     // Fresnel at the surface, dulled by roughness (Lagarde's form).
     let fres = f0 + (max(vec3<f32>(1.0 - rough), f0) - f0) * pow(1.0 - nv, 5.0);
-    let albedo = base * (1.0 - metal) * (1.0 - tw);
+    // The diffuse under the specular layer gets what the layer did not
+    // reflect (`under_layer`), as EEVEE and Cycles layer the Principled.
+    let albedo = base * (1.0 - metal) * (1.0 - tw) * under_layer(fd, rough, nv);
     let s = plain_surf(pos, n, v, albedo, f0, rough);
     // The environment: diffuse from the irradiance, specular from the
     // prefiltered copy; then the lamps, shadowed.
     let r = reflect(d, n);
-    var c = albedo * sh_irradiance(n) * (1.0 - fres)
+    var c = albedo * sh_irradiance(n)
         + prefiltered(r, rough) * env_brdf(f0, rough, nv)
         + preview_lamps(s)
         + emit_at(t, bary);
@@ -209,7 +200,8 @@ fn preview_lobe(h: Hit, m: u32, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, f
         var nd = refract(d, n, eta);
         var next_o = hit - off;
         if (dot(nd, nd) < 1e-6) { nd = reflect(d, n); next_o = pos; }
-        return Layer(c, alpha, alpha * tw * base * (vec3<f32>(1.0) - fres), next_o, normalize(nd), true);
+        // √base a crossing, base in and out (`shade.wgsl`).
+        return Layer(c, alpha, alpha * tw * sqrt(base) * (vec3<f32>(1.0) - fres), next_o, normalize(nd), true);
     }
     // An alpha-blended surface: what is behind it shows through `1 − alpha`.
     return Layer(c, alpha, vec3<f32>(1.0 - alpha), hit - off, d, alpha < 0.999);
@@ -256,18 +248,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (layer == 0u) {
                 if (p.film.x != 0u) {
                     guide(i, vec3<f32>(0.0), -d, -1.0);
-                    emit(i, vec3<f32>(0.0), vec4<f32>(0.0), 0.0);
+                    emit(i, vec3<f32>(0.0), vec4<f32>(0.0), 0.0, 1.0);
                     return;
                 }
                 if (p.envmap != 0u && p.env_hidden == 0u) {
                     let bg = env_at(d);
                     guide(i, bg, -d, -1.0);
-                    emit(i, bg, vec4<f32>(0.0), 1.0);
+                    emit(i, bg, vec4<f32>(0.0), 1.0, 0.0);
                     return;
                 }
                 let g = grid_over(o, d, INF, pix);
                 guide(i, srgb_to_linear(sky), -d, -1.0);
-                emit(i, vec3<f32>(0.0), vec4<f32>(sky * (1.0 - g.a) + g.rgb, 1.0), 1.0);
+                emit(i, vec3<f32>(0.0), vec4<f32>(sky * (1.0 - g.a) + g.rgb, 1.0), 1.0, 1.0);
                 return;
             }
             // Seen past a surface: under a transparent film the share let
@@ -290,5 +282,5 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         o = lay.o;
         d = lay.d;
     }
-    emit(i, col, grid_over(o0, d0, first_t, pix), clamp(cover, 0.0, 1.0));
+    emit(i, col, grid_over(o0, d0, first_t, pix), clamp(cover, 0.0, 1.0), 0.0);
 }

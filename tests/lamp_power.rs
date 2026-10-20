@@ -171,7 +171,11 @@ fn world_radiance(gpu: &phiray::Gpu, level: f32) -> [f32; 3] {
 
 /// The same, over whatever geometry, at `bounces` (0 = the kernel's own).
 fn world_on(gpu: &phiray::Gpu, scene: &[Tri], level: f32, bounces: u32) -> [f32; 3] {
-    let cam = Camera { env: [level, level, level, 1.0], bounces, ..overhead(Light::default(), 0) };
+    world_with(gpu, scene, Camera { env: [level, level, level, 1.0], bounces, ..overhead(Light::default(), 0) })
+}
+
+/// The centre of `scene` under `cam`'s world, at 256 samples.
+fn world_with(gpu: &phiray::Gpu, scene: &[Tri], cam: Camera) -> [f32; 3] {
     let mut tr = Tracer::from_scene(gpu, Scene::from_tris(scene, &dark())).expect("scene");
     tr.set_mode(Mode::Rendered);
     tr.set_samples(256);
@@ -280,6 +284,21 @@ fn a_shadowed_surface_gets_what_bounces_to_it() {
     let off = (four / TRENCH_B4 - 1.0).abs();
     assert!(off < 0.05, "four bounces into a trench: {four:.3}, Cycles {TRENCH_B4:.3} ({:.0}% out)", off * 100.0);
     assert!(one > TRENCH_B1 * 0.75, "and one bounce is within a step of Cycles' one: {one:.3} against {TRENCH_B1:.3}");
+}
+
+/// Light Paths ▸ Max Bounces ▸ Total: 0 is direct light only, so the
+/// trench floor keeps the strip of sky it sees and loses everything the
+/// walls bounce to it; Total 12 with Diffuse 4 is the four-bounce number.
+#[test]
+fn total_bounces_zero_is_direct_light_only() {
+    let Some(gpu) = Ray::gpu() else { return eprintln!("no GPU adapter; skipped") };
+    let lit = Camera { env: [1.0, 1.0, 1.0, 1.0], bounces: 4, ..overhead(Light::default(), 0) };
+    let none = world_with(&gpu, &trench(), lit.with_depth(0, 8, 12, 4))[0];
+    let four = world_with(&gpu, &trench(), lit.with_depth(12, 8, 12, 4))[0];
+    assert!(none > 0.1, "the sky the floor sees still lights it: {none:.3}");
+    assert!(none < four * 0.9, "no bounces, less light: {none:.3} against {four:.3} at four");
+    let off = (four / TRENCH_B4 - 1.0).abs();
+    assert!(off < 0.05, "Total 12 leaves Diffuse 4 as it was: {four:.3}, Cycles {TRENCH_B4:.3}");
 }
 
 /// Cycles' specular lobe at its peak, for a 1000 W point lamp 2 m above a
@@ -448,4 +467,57 @@ fn a_banded_sky_lights_the_plane_as_cycles_does() {
     let off = (got / WORLD_BAND - 1.0).abs();
     eprintln!("banded sky: phiray {got:.4}, Cycles {WORLD_BAND:.4} (x{:.3})", got / WORLD_BAND);
     assert!(off < 0.10, "a banded sky: {got:.4}, Cycles {WORLD_BAND:.4} ({:.0}% out)", off * 100.0);
+}
+
+/// Light Paths ▸ Clamping: the 1000 W point lamp puts 5.05 on the plane,
+/// and a Direct clamp of 2 caps every sample's direct light at 2 — so the
+/// mean is 2, not 5.05 (`film_clamp_light`). An Indirect clamp leaves
+/// direct light alone.
+#[test]
+fn a_direct_clamp_caps_the_lamp_and_an_indirect_one_does_not() {
+    let Some(gpu) = Ray::gpu() else { return };
+    let at = [0.0, 0.0, 2.0];
+    let point = Light { pos: at, kind: 1, color: [1000.0; 3], size: 0.0, dir: [0.0, 0.0, -1.0], ..Light::default() };
+    let centre = |direct: f32, indirect: f32| {
+        let mut tr = Tracer::from_scene(&gpu, Scene::from_tris(&plane(), &dark())).expect("scene");
+        tr.set_mode(Mode::Rendered);
+        tr.set_samples(64);
+        let cam = Camera { limit: [direct, indirect, 0.0, 0.0], ..overhead(point, 1) };
+        while !tr.sample(&gpu, cam, W, W).1 {}
+        let lin = tr.radiance(&gpu);
+        lin[(W / 2 * W + W / 2) as usize][0]
+    };
+    let free = centre(0.0, 0.0);
+    let capped = centre(2.0, 0.0);
+    let indirect_only = centre(0.0, 2.0);
+    assert!(free > 4.0, "unclamped {free}");
+    assert!((capped - 2.0).abs() < 0.05, "direct clamp 2 -> {capped}");
+    assert!((indirect_only - free).abs() / free < 0.05, "an indirect clamp leaves direct light: {indirect_only} vs {free}");
+}
+
+/// Denoise after Adaptive Sampling: a pixel that settled early has fewer
+/// samples than the frame, and its mean is over ITS count. The filter took
+/// the frame's count instead, so every settled pixel came out darker by
+/// the share of the render it sat out — blotches over a whole 256-sample
+/// frame. The denoised plane must stay as bright as the traced one.
+#[test]
+fn denoising_an_adaptive_render_keeps_its_brightness() {
+    let Some(gpu) = Ray::gpu() else { return eprintln!("no GPU adapter; skipped") };
+    let point = Light { pos: [0.0, 0.0, 2.0], kind: 1, color: [100.0; 3], size: 0.0, dir: [0.0, 0.0, -1.0], ..Light::default() };
+    let mut tr = Tracer::from_scene(&gpu, Scene::from_tris(&plane(), &dark())).expect("scene");
+    tr.set_mode(Mode::Rendered);
+    tr.set_samples(64);
+    // A loose threshold, so the flat plane settles long before 64.
+    tr.set_adaptive([0.5, 4.0, 4.0, 1.0]);
+    let cam = overhead(point, 1);
+    while !tr.sample(&gpu, cam, W, W).1 {}
+    // What is shown, not the sums: the sums' scale cancels on a flat
+    // plane, the picture's does not.
+    let mean = |rgba: &[u8]| rgba.chunks_exact(4).map(|p| f32::from(p[0])).sum::<f32>() / (rgba.len() / 4) as f32;
+    let traced = mean(&tr.pixels(&gpu));
+    assert!(tr.unconverged(&gpu).is_some_and(|left| left < W * W), "some pixels settled early");
+    tr.denoise(&gpu);
+    let denoised = mean(&tr.pixels(&gpu));
+    assert!(traced > 40.0 && traced < 230.0, "a mid-grey plane, not clipped: {traced:.1}");
+    assert!((denoised / traced - 1.0).abs() < 0.05, "denoised {denoised:.3} against traced {traced:.3}");
 }

@@ -35,7 +35,7 @@ fn camera() -> Camera {
 fn scene(bend: f32) -> Scene {
     let mut s = Scene::default();
     let n = [0.0, -1.0, 0.0];
-    let mut wall = |s: &mut Scene, y: f32, half: f32, c: f32, world_x: f32, normals: [[f32; 3]; 4]| {
+    let wall = |s: &mut Scene, y: f32, half: f32, c: f32, world_x: f32, normals: [[f32; 3]; 4]| {
         s.instance([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [world_x, y, 0.0, 1.0]]);
         let q = [[-half, 0.0, -half], [half, 0.0, -half], [half, 0.0, half], [-half, 0.0, half]];
         for (tri, nn) in [([q[0], q[1], q[2]], [normals[0], normals[1], normals[2]]), ([q[0], q[2], q[3]], [normals[0], normals[2], normals[3]])] {

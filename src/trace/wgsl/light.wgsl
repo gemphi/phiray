@@ -142,6 +142,98 @@ fn charlie(nh: f32, rough: f32) -> f32 {
     return (2.0 + inv) * pow(sin2, inv * 0.5) / (2.0 * PI);
 }
 
+// The split-sum's second term — how much of a prefiltered reflection a
+// surface of `f0` and `rough` shows at `nv` — in Karis's analytic fit.
+fn env_brdf(f0: vec3<f32>, rough: f32, nv: f32) -> vec3<f32> {
+    let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
+    let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let r = rough * c0 + c1;
+    let a004 = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;
+    let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + vec3<f32>(ab.y);
+}
+
+// The Principled's dielectric reflection (`svm/closure.h`): F0 from the
+// IOR the material carries. phiber hands over the IOR Specular IOR Level
+// has already adjusted (`BlendBsdf::specular_eta`), so a level of 0.1 —
+// skin, the pose files' floors — reflects a fifth of what 0.5 does. This
+// was a constant 0.04 for every surface, which is IOR 1.5 at level 0.5.
+fn dielectric_f0(ior: f32) -> vec3<f32> {
+    let r = (ior - 1.0) / (ior + 1.0);
+    return vec3<f32>(r * r);
+}
+
+// What reaches the diffuse beneath a specular layer of reflectance `f0`
+// seen at `nv`: Cycles weights the lower closures by one minus the layer's
+// albedo (`closure_layering_weight` over `bsdf_albedo`), so light the
+// coat of gloss reflects is not also scattered by the colour under it.
+// Without it every dielectric surface returned its reflection on top of
+// its full diffuse — a few percent at normal incidence, far more at the
+// grazing angles a floor is seen at.
+fn under_layer(f0: vec3<f32>, rough: f32, nv: f32) -> f32 {
+    let e = env_brdf(f0, rough, nv);
+    return clamp(1.0 - max(e.r, max(e.g, e.b)), 0.0, 1.0);
+}
+
+// Film ▸ Pixel Filter: where in its pixel a camera ray goes, in pixels from
+// the centre, for two uniform numbers — Cycles' importance-sampled filter
+// (`scene/film.cpp`'s `filter_table`, read by `camera.h`'s
+// `filter_table_sample`). Each axis is drawn on its own, as Cycles reads
+// its table once per axis. Blender's default is Blackman-Harris 1.5 px,
+// which Cycles spreads over twice that width; a Gaussian over three times
+// it. phiray's own (`p.integrator.x` 0) is a one-pixel box: sharper than any
+// Blender render, which is why its edges never matched.
+fn filter_offset2(u: f32, v: f32) -> vec2<f32> {
+    let kind = u32(p.integrator.x + 0.5);
+    let w = p.integrator.y;
+    if (kind == 1u) { return (vec2<f32>(u, v) - 0.5) * w; }
+    if (kind == 2u) {
+        // `filter_func_gaussian` over 3w: exp(−2 (6x / 3w)²), a normal of
+        // σ = w / 4 — Box–Muller, cut at the table's edge (±1.5 w).
+        let r = sqrt(-2.0 * log(max(u, 1e-7))) * (w * 0.25);
+        let a = 6.2831853 * v;
+        return clamp(vec2<f32>(r * cos(a), r * sin(a)), vec2<f32>(-1.5 * w), vec2<f32>(1.5 * w));
+    }
+    if (kind == 3u) { return vec2<f32>(blackman_harris_at(u), blackman_harris_at(v)) * (2.0 * w); }
+    return vec2<f32>(u, v) - 0.5;
+}
+
+// The inverse of the Blackman-Harris window's distribution, as a fraction of
+// its width from the centre (−0.5..0.5): `filter_func_blackman_harris`
+// integrates in closed form, and bisection on that is exact to the 20th bit
+// for a cost a path does not notice.
+fn blackman_harris_at(u: f32) -> f32 {
+    let target_ = u * 6.2831853 * 0.35875;
+    var lo = 0.0;
+    var hi = 6.2831853;
+    for (var k = 0u; k < 20u; k++) {
+        let v = 0.5 * (lo + hi);
+        let g = 0.35875 * v - 0.48829 * sin(v) + 0.07064 * sin(2.0 * v) - 0.0038933 * sin(3.0 * v);
+        if (g < target_) { lo = v; } else { hi = v; }
+    }
+    return 0.5 * (lo + hi) / 6.2831853 - 0.5;
+}
+
+// Light Paths ▸ Caustics ▸ Filter Glossy: the least roughness a glossy lobe
+// takes at a hit the path reached with `min_pdf` the smallest density it
+// was sampled with so far — Cycles' blur (`surface_shader.h`: `blur_pdf =
+// min_ray_pdf / filter_glossy`, and below 1 the lobe's alpha is raised to
+// √(1 − blur_pdf) / 2). Filter Glossy 0 blurs nothing. phiray's own
+// (`p.integrator.x` 0) is the 0.3 floor it always had.
+fn glossy_floor(min_pdf: f32) -> f32 {
+    if (p.integrator.x < 0.5) { return 0.3; }
+    if (p.integrator.z <= 0.0) { return 0.0; }
+    let blur_pdf = min_pdf / p.integrator.z;
+    if (blur_pdf >= 1.0) { return 0.0; }
+    return sqrt(sqrt(1.0 - blur_pdf) * 0.5);
+}
+
+// Light Paths ▸ Caustics ▸ Reflective and Refractive: whether a path that
+// has bounced diffusely still meets glossy reflection, and glass, at its
+// next hit (`svm/closure.h`'s `reflective_caustics`, `refractive_caustics`).
+fn caustic_reflective() -> bool { return p.integrator.x < 0.5 || (u32(p.integrator.w + 0.5) & 1u) != 0u; }
+fn caustic_refractive() -> bool { return p.integrator.x < 0.5 || (u32(p.integrator.w + 0.5) & 2u) != 0u; }
+
 // Density of the GGX sampler (`ggx_sample_vndf`, then the view direction
 // mirrored in the sampled normal) for the outgoing direction `l`:
 // `G1(v) · D(h) / (4 · n·v)` — Cycles' `bsdf_microfacet_eval` pdf.
@@ -201,82 +293,122 @@ fn visible(org: vec3<f32>, l: vec3<f32>, dist: f32) -> f32 {
     return select(1.0, 0.0, trace(org, l, dist, true).tri != 0xffffffffu);
 }
 
-fn lights(s: Surf, seed: ptr<function, u32>) -> vec3<f32> {
-    var c = vec3<f32>(0.0);
-    // A world is a light, image or no image. With one and no lamps it is the
-    // only light — Blender adds nothing on top of a world, and Material
-    // Preview's studio HDRI is exactly this case. The three-point rig below
-    // is a fallback for a scene with no light of *any* kind.
-    //
-    // This used to test the environment image alone, so a scene lit by a
-    // flat world colour got the rig on top of it: a dome of radiance L came
-    // back as `0.83 L + 0.068` where Blender gives exactly `albedo × L`
-    // (`rendering.md` §54). An image was already excluded for the same
-    // reason — it made every lamp-less HDRI scene about a fifth too bright.
+// A light's share at a shading point before its shadow ray, and that ray:
+// `c` is what arrives if nothing is in the way, `dir` and `dist` the ray
+// that says whether something is. Every light is reduced to one of these
+// so that `direct` can trace them all from a single call site.
+struct Shadowed { c: vec3<f32>, dir: vec3<f32>, dist: f32 }
+
+fn unshadowed() -> Shadowed { return Shadowed(vec3<f32>(0.0), vec3<f32>(0.0, 0.0, 1.0), 0.0); }
+
+// A world is a light, image or no image. With one and no lamps it is the
+// only light — Blender adds nothing on top of a world, and Material
+// Preview's studio HDRI is exactly this case. The three-point rig below
+// is a fallback for a scene with no light of *any* kind.
+//
+// This used to test the environment image alone, so a scene lit by a
+// flat world colour got the rig on top of it: a dome of radiance L came
+// back as `0.83 L + 0.068` where Blender gives exactly `albedo × L`
+// (`rendering.md` §54). An image was already excluded for the same
+// reason — it made every lamp-less HDRI scene about a fifth too bright.
+fn uses_rig() -> bool {
     let world_lit = p.envmap != 0u || dot(p.env.rgb, p.env.rgb) > 0.0;
-    if (p.count == 0u && world_lit) { return c; }
-    if (p.count == 0u) {
-        // Three-point rig tied to the view: key (shadowed), fill, rim.
+    return p.count == 0u && !world_lit;
+}
+
+// The rig, tied to the view: a shadowed key (`k` 0), a shadowed rim (1),
+// and an unshadowed fill (`rig_fill`).
+fn rig_query(k: u32, s: Surf, seed: ptr<function, u32>) -> Shadowed {
+    if (k == 0u) {
         let key = cone_dir(p.sun, 0.06, seed);
-        c += brdf(s, key, vec3<f32>(2.0)) * visible(s.pos, key, INF);
-        let fill = normalize(-p.right * 0.8 + p.up * 0.2 + p.back * 0.6);
-        c += brdf(s, fill, vec3<f32>(0.45));
-        let rim = normalize(p.up * 0.6 - p.back * 0.8 + p.right * 0.2);
-        c += brdf(s, rim, vec3<f32>(0.9)) * visible(s.pos, rim, INF);
-        return c;
+        return Shadowed(brdf(s, key, vec3<f32>(2.0)), key, INF);
     }
-    // Up to 4 lights per sample; with more, pick 4 at random and reweight.
-    let many = p.count > 4u;
-    let weight = select(1.0, f32(p.count) / 4.0, many);
-    for (var k = 0u; k < min(p.count, 4u); k++) {
-        var idx = k;
-        if (many) { idx = min(u32(rnd(seed) * f32(p.count)), p.count - 1u); }
-        let li = p.lights[idx];
-        if (li.kind == 0u) {
-            let l = cone_dir(-li.dir, li.size * 0.5, seed);
-            c += brdf(s, l, li.color) * visible(s.pos, l, INF) * weight;
-            continue;
-        }
-        let r1 = rnd(seed);
-        let r2 = rnd(seed);
-        let aim = li.pos + onb(normalize(s.pos - li.pos), (r1 - 0.5) * li.size, (r2 - 0.5) * li.size);
-        let to = aim - s.pos;
-        let d2 = max(dot(to, to), 1e-6);
-        let l = to / sqrt(d2);
-        // Irradiance at the surface, which is what the BSDF below expects:
-        // a lamp's Power over the sphere it fills, `P / (4π d²)`. The BSDF
-        // divides the diffuse albedo by π itself (`brdf_w`), so dividing by
-        // π here as well — which this did, as `4π²d²` — made every lamp π
-        // times too dim (`rendering.md` §54).
-        var e = li.color / (4.0 * PI * d2);
-        if (li.kind == 2u) {
-            e *= spot_mask(li, l);
-        } else if (li.kind == 3u) {
-            // An area light shines from one side only, and its radiance is
-            // its flux over its area (`eevee_light.cc`'s
-            // `shape_radiance_get`: `L = P / (π A)` over the full
-            // rectangle). Far away that comes to `P cos / (π d²)` — the
-            // area cancels, which is what Blender means by "make
-            // illumination power constant" — and `e` already carries
-            // `1/(4π d²)`, so the factor is 4 (§55).
-            //
-            // Close up the source is not a point. The disk of the same area
-            // puts `L π r² / (r² + d²)` on a surface, with `r² = A/π`, so
-            // the whole of the correction is `d²` becoming `d² + A/π`
-            // (§57). At a metre square and two metres away that is 1.877
-            // against Cycles' 1.862, where the far-field form gives 2.026.
-            let shape = li.shape == AREA_DISK || li.shape == AREA_ELLIPSE;
-            let a = max(li.size * li.size_y, 0.0) * select(1.0, 0.25 * PI, shape);
-            e *= max(dot(-l, li.dir), 0.0) * 4.0 * d2 / (d2 + a / PI);
-        }
-        if (max(e.r, max(e.g, e.b)) < 1e-5) { continue; }
-        c += brdf(s, l, e) * visible(s.pos, l, sqrt(d2) * 0.999) * weight;
+    let rim = normalize(p.up * 0.6 - p.back * 0.8 + p.right * 0.2);
+    return Shadowed(brdf(s, rim, vec3<f32>(0.9)), rim, INF);
+}
+
+fn rig_fill(s: Surf) -> vec3<f32> {
+    let fill = normalize(-p.right * 0.8 + p.up * 0.2 + p.back * 0.6);
+    return brdf(s, fill, vec3<f32>(0.45));
+}
+
+// One lamp per shading point, picked in proportion to its power, its
+// light divided by the chance of the pick — Cycles' light distribution
+// with Light Tree off (`light_distribution_sample`). This took up to four
+// lamps a point, each with its own shadow ray, and a path makes a shading
+// point at every bounce: thirty and more rays a sample on pose 26, where
+// Cycles spends about ten. The expected image is the same.
+fn lamp_query(s: Surf, seed: ptr<function, u32>) -> Shadowed {
+    var total = 0.0;
+    for (var k = 0u; k < p.count; k++) { total += lamp_power(p.lights[k]); }
+    if (total <= 0.0) { return unshadowed(); }
+    let u = rnd(seed) * total;
+    var idx = p.count - 1u;
+    var run = 0.0;
+    for (var k = 0u; k < p.count; k++) {
+        run += lamp_power(p.lights[k]);
+        if (u < run) { idx = k; break; }
     }
-    return c;
+    let li = p.lights[idx];
+    let weight = total / max(lamp_power(li), 1e-12);
+    if (li.kind == 0u) {
+        let l = cone_dir(-li.dir, li.size * 0.5, seed);
+        return Shadowed(brdf(s, l, li.color) * weight, l, INF);
+    }
+    let r1 = rnd(seed);
+    let r2 = rnd(seed);
+    let aim = li.pos + onb(normalize(s.pos - li.pos), (r1 - 0.5) * li.size, (r2 - 0.5) * li.size);
+    let to = aim - s.pos;
+    let d2 = max(dot(to, to), 1e-6);
+    let l = to / sqrt(d2);
+    // Irradiance at the surface, which is what the BSDF below expects:
+    // a lamp's Power over the sphere it fills, `P / (4π d²)`. The BSDF
+    // divides the diffuse albedo by π itself (`brdf_w`), so dividing by
+    // π here as well — which this did, as `4π²d²` — made every lamp π
+    // times too dim (`rendering.md` §54).
+    var e = li.color / (4.0 * PI * d2);
+    if (li.kind == 2u) {
+        e *= spot_mask(li, l);
+    } else if (li.kind == 3u) {
+        // An area light shines from one side only, and its radiance is
+        // its flux over its area (`eevee_light.cc`'s
+        // `shape_radiance_get`: `L = P / (π A)` over the full
+        // rectangle). Far away that comes to `P cos / (π d²)` — the
+        // area cancels, which is what Blender means by "make
+        // illumination power constant" — and `e` already carries
+        // `1/(4π d²)`, so the factor is 4 (§55).
+        //
+        // Close up the source is not a point. The disk of the same area
+        // puts `L π r² / (r² + d²)` on a surface, with `r² = A/π`, so
+        // the whole of the correction is `d²` becoming `d² + A/π`
+        // (§57). At a metre square and two metres away that is 1.877
+        // against Cycles' 1.862, where the far-field form gives 2.026.
+        let shape = li.shape == AREA_DISK || li.shape == AREA_ELLIPSE;
+        let a = max(li.size * li.size_y, 0.0) * select(1.0, 0.25 * PI, shape);
+        e *= max(dot(-l, li.dir), 0.0) * 4.0 * d2 / (d2 + a / PI);
+    }
+    if (max(e.r, max(e.g, e.b)) < 1e-5) { return unshadowed(); }
+    return Shadowed(brdf(s, l, e) * weight, l, sqrt(d2) * 0.999);
+}
+
+// How much a lamp is picked for (`lamp_query`): its emitted power, in the units
+// its colour carries — watts for point, spot and area lamps
+// (`rendered/lamp.rs`), irradiance for a sun, which reaches the whole scene
+// and so is weighed as that irradiance over the scene's cross-section
+// (`p.ao` is 8% of the scene's extent). Only the ratios matter: a pick in
+// proportion to them is unbiased whatever they are, and the closer they
+// follow the light that arrives, the less noise a sample carries.
+fn lamp_power(li: Light) -> f32 {
+    let lum = dot(max(li.color, vec3<f32>(0.0)), vec3<f32>(0.2126, 0.7152, 0.0722));
+    if (li.kind == 0u) {
+        let r = p.ao / 0.08;
+        return lum * PI * r * r;
+    }
+    return lum;
 }
 
 
-// Probability that `glow_light` picks face `f` (0 when it does not glow).
+// Probability that `glow_query` picks face `f` (0 when it does not glow).
 fn lamp_chance(f: u32) -> f32 {
     let count = data[0];
     if (count == 0u) { return 0.0; }
@@ -292,9 +424,9 @@ fn lamp_chance(f: u32) -> f32 {
 }
 
 // Next-event estimation: one emissive triangle (by power), one point on it.
-fn glow_light(s: Surf, seed: ptr<function, u32>) -> vec3<f32> {
+fn glow_query(s: Surf, seed: ptr<function, u32>) -> Shadowed {
     let count = data[0];
-    if (count == 0u) { return vec3<f32>(0.0); }
+    if (count == 0u) { return unshadowed(); }
     // Pick by power: binary search in the cdf stored after the ids.
     let u = rnd(seed);
     var lo = 0u;
@@ -321,7 +453,7 @@ fn glow_light(s: Surf, seed: ptr<function, u32>) -> vec3<f32> {
     let pl = chance * d2 / max(area * cos_l, 1e-8);
     let pb = max(dot(s.n, l), 0.0) / PI;
     let w = pl * pl / max(pl * pl + pb * pb, 1e-12);
-    return brdf(s, l, e) * w * visible(s.pos, l, sqrt(d2) * 0.999);
+    return Shadowed(brdf(s, l, e) * w, l, sqrt(d2) * 0.999);
 }
 
 // --- Environment sampling -------------------------------------------------
@@ -421,7 +553,7 @@ fn cosine_dir(n: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32> {
 }
 
 // Emission from a face reached by a cosine-sampled ray, weighted against
-// `glow_light`, which samples the same emitters directly (power heuristic).
+// `glow_query`, which samples the same emitters directly (power heuristic).
 fn glow_mis(t: Tri, h: Hit, from_n: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     let e = emit_at(t, vec3<f32>(1.0 - h.u - h.v, h.u, h.v));
     let chance = lamp_chance(h.tri);
@@ -443,12 +575,12 @@ fn glow_mis(t: Tri, h: Hit, from_n: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
 // counted twice, once here and once by the reflection ray: +5 % on a metal
 // under a flat sky, and a metal chest reflecting the studio sky at 103
 // against Cycles' 73.
-fn env_light(s: Surf, seed: ptr<function, u32>, mis_spec: bool) -> vec3<f32> {
-    if (p.env_cdf == 0u || p.envmap == 0u) { return vec3<f32>(0.0); }
+fn env_query(s: Surf, seed: ptr<function, u32>, mis_spec: bool) -> Shadowed {
+    if (p.env_cdf == 0u || p.envmap == 0u) { return unshadowed(); }
     let e = env_sample(seed);
-    if (e.pdf <= 0.0) { return vec3<f32>(0.0); }
+    if (e.pdf <= 0.0) { return unshadowed(); }
     let nl = dot(s.n, e.dir);
-    if (nl <= 0.0) { return vec3<f32>(0.0); }
+    if (nl <= 0.0) { return unshadowed(); }
     let pb = nl / PI;
     let pe2 = e.pdf * e.pdf;
     let wd = pe2 / max(pe2 + pb * pb, 1e-12);
@@ -457,7 +589,41 @@ fn env_light(s: Surf, seed: ptr<function, u32>, mis_spec: bool) -> vec3<f32> {
         let pg = ggx_pdf(s, e.dir);
         ws = pe2 / max(pe2 + pg * pg, 1e-12);
     }
-    return brdf_w(s, e.dir, e.radiance / e.pdf, wd, ws) * visible(s.pos, e.dir, INF);
+    return Shadowed(brdf_w(s, e.dir, e.radiance / e.pdf, wd, ws), e.dir, INF);
+}
+
+// Every light at a shading point — the picked lamp, an emissive face, the
+// world image, or the studio rig when the scene has no light at all —
+// each with its shadow ray, traced from this ONE call site.
+//
+// It was three functions with seven `visible` calls between them, and a
+// path calls them at the camera hit, at every bounce and at a reflection's
+// hit: each call site is a whole BVH walk inlined into the kernel, which
+// came to about twenty walks. That is what took NVIDIA's compiler three to
+// five minutes on a new kernel and llvmpipe past 7 GB. The lights and the
+// random numbers they draw are the same as before, in the same order.
+// `with_env` is false for a reflection's hit, which takes the world as a
+// flat term instead (`bounce_light`); `mis_spec` is `env_query`'s weight
+// against a GGX sample the caller also takes.
+fn direct(s: Surf, seed: ptr<function, u32>, with_env: bool, mis_spec: bool) -> vec3<f32> {
+    let rig = uses_rig();
+    var sum = select(vec3<f32>(0.0), rig_fill(s), rig);
+    for (var k = 0u; k < 4u; k++) {
+        var q = unshadowed();
+        if (k == 0u) {
+            if (rig) { q = rig_query(0u, s, seed); } else { q = lamp_query(s, seed); }
+        } else if (k == 1u) {
+            if (rig) { q = rig_query(1u, s, seed); }
+        } else if (k == 2u) {
+            q = glow_query(s, seed);
+        } else if (with_env) {
+            q = env_query(s, seed, mis_spec);
+        }
+        if (max(q.c.r, max(q.c.g, q.c.b)) > 0.0) {
+            sum += q.c * visible(s.pos, q.dir, q.dist);
+        }
+    }
+    return sum;
 }
 
 // Diffuse bounces: radiance arriving at a surface with normal `n` at `pos`.
@@ -481,7 +647,10 @@ fn env_light(s: Surf, seed: ptr<function, u32>, mis_spec: bool) -> vec3<f32> {
 //
 // Without a world image and without glowing meshes there is nothing to gather,
 // so one occlusion ray within `p.ao` stands in — Workbench's ambient occlusion.
-fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32> {
+// `bounce` false is Max Bounces' Total 0 (or Diffuse 0): the world is still
+// a light the surface sees — Cycles counts the background as direct — but a
+// ray that meets geometry brings nothing back.
+fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>, bounce: bool) -> vec3<f32> {
     // A world is something to gather, image or no image — the same
     // predicate the direct pass uses (§54). This tested the image alone, so
     // a scene whose world is a flat colour never took the path below at
@@ -493,36 +662,70 @@ fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32>
         return env_at(dir) * mix(0.25, 1.0, visible(pos, dir, p.ao));
     }
     let sampled = p.env_cdf != 0u;
-    let depth = select(select(1u, 4u, sampled), p.bounces, p.bounces != 0u);
+    let depth = select(1u, select(select(1u, 4u, sampled), p.bounces, p.bounces != 0u), bounce);
     var acc = vec3<f32>(0.0);
     var thr = vec3<f32>(1.0);
     var org = pos;
     var nrm = n;
     // Set when a ray escapes: the path is then complete and needs no tail.
     var escaped = false;
+    // The smallest density the path was sampled with (`min_ray_pdf`), for
+    // Filter Glossy; and the ray carried on through glass, if it was.
+    var min_pdf = 3.0e38;
+    var through = false;
+    var dir = vec3<f32>(0.0, 0.0, 1.0);
+    var pb = 1.0;
     for (var b = 0u; b < depth; b++) {
-        let dir = cosine_dir(nrm, seed);
+        if (!through) {
+            dir = cosine_dir(nrm, seed);
+            pb = max(dot(nrm, dir), 0.0) / PI;
+        }
+        through = false;
+        min_pdf = min(min_pdf, pb);
         let h = trace(org, dir, INF, false);
         if (h.tri == 0xffffffffu) {
-            // Weighted against `env_light`, which samples the same world.
-            let pb = max(dot(nrm, dir), 0.0) / PI;
+            // Weighted against `env_query`, which samples the same world.
             let pe = env_pdf(dir);
             acc += thr * env_at(dir) * select(1.0, pb * pb / max(pb * pb + pe * pe, 1e-12), pe > 0.0);
             escaped = true;
             break;
         }
+        if (!bounce) { break; }
         let t = tri_at(h.tri);
         let ng0 = normalize(cross(t.b - t.a, t.c - t.a));
         let ng = select(-ng0, ng0, dot(ng0, dir) < 0.0);
         let hit = org + dir * h.t + ng * (p.eps + h.t * 1e-5);
         let base = max(t.color.rgb, vec3<f32>(0.0));
-        let albedo = base * (1.0 - t.metal);
+        let rough = max(t.rough, glossy_floor(min_pdf));
+        // This hit came by a diffuse bounce, so Caustics decides whether it
+        // reflects at all: without Reflective the metal and the dielectric
+        // reflection are both gone, and the diffuse under the latter keeps
+        // what it would have given up.
+        let glossy = caustic_reflective();
+        let fd = select(vec3<f32>(0.0), dielectric_f0(t.ior), glossy);
+        let metal = select(0.0, t.metal, glossy);
+        // Glass is not a diffuse surface: what it transmits is not
+        // scattered here (`closure.h` takes the transmission's weight out of
+        // everything under it).
+        let tw = t.trans * (1.0 - t.metal);
+        let albedo = base * (1.0 - t.metal) * (1.0 - tw) * under_layer(fd, rough, max(dot(ng, -dir), 1e-4));
         acc += thr * glow_mis(t, h, nrm, dir);
         // A ray that never left the AO radius is treated as the flat world
         // would treat it, so a crevice does not go black without a world image.
         let near = select(1.0, 0.25, !lit && h.t <= p.ao);
-        let s = plain_surf(hit, ng, -dir, albedo, mix(vec3<f32>(0.04), base, t.metal), max(t.rough, 0.3));
-        acc += thr * (lights(s, seed) + glow_light(s, seed) + env_light(s, seed, false)) * near;
+        let s = plain_surf(hit, ng, -dir, albedo, mix(fd, base, metal), rough);
+        acc += thr * direct(s, seed, true, false) * near;
+        // With Refractive on, the share glass lets through carries on in
+        // the direction it came — a thin pane's refraction, which is what
+        // lights a car's inside through its windows — tinted once per face
+        // as the camera's path tints it. Without it, Cycles drops the glass
+        // closure after a diffuse bounce and that light never arrives.
+        if (tw > 0.0 && caustic_refractive() && rnd(seed) < tw) {
+            thr *= sqrt(base);
+            org = org + dir * h.t - ng * (p.eps + h.t * 1e-5);
+            through = true;
+            continue;
+        }
         thr *= albedo;
         // Russian roulette, as Cycles terminates a path
         // (`path_state_continuation_probability`).
@@ -560,18 +763,23 @@ fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32>
     // exactly the probability the surface is open to it, so the path above
     // is already unbiased and the tail would be pure over-count. It is for
     // an environment image with no sampling table.
-    if (!escaped && !sampled && p.envmap != 0u) { acc += thr * env_at(nrm) * 0.8; }
+    if (bounce && !escaped && !sampled && p.envmap != 0u) { acc += thr * env_at(nrm) * 0.8; }
     return acc;
 }
 
 // Radiance leaving a secondary hit (flat normal, no texture, direct + ambient) —
 // what a reflection sees, where a full path would not pay for itself.
-fn bounce_light(h: Hit, org: vec3<f32>, d: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32> {
+// `min_pdf` is the density the reflection was sampled with, for Filter
+// Glossy: a sharp mirror's is high and blurs nothing, a rough one's low.
+fn bounce_light(h: Hit, org: vec3<f32>, d: vec3<f32>, min_pdf: f32, seed: ptr<function, u32>) -> vec3<f32> {
     let t = tri_at(h.tri);
     let ng0 = normalize(cross(t.b - t.a, t.c - t.a));
     let ng = select(-ng0, ng0, dot(ng0, d) < 0.0);
     let pos = org + d * h.t + ng * (p.eps + h.t * 1e-5);
     let base = max(t.color.rgb, vec3<f32>(0.0));
-    let s = plain_surf(pos, ng, -d, base * (1.0 - t.metal), mix(vec3<f32>(0.04), base, t.metal), max(t.rough, 0.3));
-    return lights(s, seed) + glow_light(s, seed) + s.albedo * env_at(ng) * 0.8 + emit_at(t, vec3<f32>(1.0 - h.u - h.v, h.u, h.v));
+    let rough = max(t.rough, glossy_floor(min_pdf));
+    let fd = dielectric_f0(t.ior);
+    let under = under_layer(fd, rough, max(dot(ng, -d), 1e-4));
+    let s = plain_surf(pos, ng, -d, base * (1.0 - t.metal) * under, mix(fd, base, t.metal), rough);
+    return direct(s, seed, false, false) + s.albedo * env_at(ng) * 0.8 + emit_at(t, vec3<f32>(1.0 - h.u - h.v, h.u, h.v));
 }

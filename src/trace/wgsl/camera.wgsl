@@ -40,6 +40,15 @@ struct Camera {
     outline_move: vec4<f32>,
     // Adaptive Sampling: [threshold, min samples, step, on].
     adapt: vec4<f32>,
+    // Light Paths ▸ Clamping: [direct, indirect, 0, 0]; 0 is no clamp.
+    limit: vec4<f32>,
+    // Max Bounces: [total, transparent, transmission, glossy], each plus
+    // one; 0 keeps the fixed limits (`Camera::depth`).
+    depth: vec4<u32>,
+    // Pixel Filter and Caustics: [filter (0 phiray's own, 1 Box,
+    // 2 Gaussian, 3 Blackman-Harris), width px, filter glossy, caustics
+    // bits (1 reflective, 2 refractive)].
+    integrator: vec4<f32>,
     lights: array<Light, 16>,
 }
 struct Light { pos: vec3<f32>, kind: u32, color: vec3<f32>, size: f32, dir: vec3<f32>, cone: f32, right: vec3<f32>, size_y: f32, shape: u32, blend: f32, spot_scale: vec2<f32> }

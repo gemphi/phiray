@@ -19,7 +19,7 @@ pub mod taa;
 mod trees;
 mod visible;
 
-pub use kernel::{AREA_DISK, AREA_ELLIPSE, AREA_RECT, AREA_SQUARE, Atlas, Camera, LIGHTS, Light, NO_MAT, NO_TEX, Tri, View};
+pub use kernel::{AREA_DISK, AREA_ELLIPSE, AREA_RECT, AREA_SQUARE, Atlas, Camera, LIGHTS, Light, NO_MAT, NO_TEX, PixelFilter, Tri, View};
 pub use lamps::Lamps;
 /// A dispatch after the slices (`Tracer::tail`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,13 +29,14 @@ enum BTail {
     Smaa,
     Edge,
     /// Adaptive Sampling: stage 0 tests convergence, stage 1 widens the
-    /// unconverged set by a pixel. Recorded on every sample; the kernel
-    /// returns at once unless the sample is a step boundary, so the pass
-    /// never has to be re-recorded for it.
+    /// unconverged set by a pixel, stages 2 and 3 pack the pixels left into
+    /// the list the next sample traces (`gather.wgsl`). Recorded on every
+    /// sample; the test returns at once unless the sample is a step
+    /// boundary, so the pass never has to be re-recorded for it.
     Adapt,
 }
 
-pub use shader::{Adapt, AdaptDilate, Edge, Fx, Preview, Preview4, Show, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
+pub use shader::{Adapt, AdaptClear, AdaptDilate, AdaptGather, Edge, Fx, Preview, Preview4, Show, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
 pub use outline::Outline;
 pub use instance::Instance;
 pub use mat::Mat;
@@ -43,14 +44,14 @@ pub use proc::{PROC_NORMALIZE, Proc};
 pub use srgb::Srgb;
 pub use scene::Scene;
 
-use crate::bvh::{Aabb, Wide};
+use crate::bvh::{Aabb, Node};
 use crate::gpu::{Gpu, GpuArray, Pass, Visibility};
 use crate::kernel::Dispatch;
 use crate::mode::Mode;
 
 pub struct Tracer {
     /// Each large array over `chunks()` bindings.
-    nodes: Vec<GpuArray<Wide>>,
+    nodes: Vec<GpuArray<Node>>,
     faces: Vec<GpuArray<[u32; 4]>>,
     verts: Vec<GpuArray<[f32; 8]>>,
     /// `[table…, atlas…, instances…]` (`Scene::table`, `Atlas::words`,
@@ -454,8 +455,7 @@ impl Tracer {
             tail.push((BTail::Edge, 0, n));
         }
         if self.adapt[3] != 0.0 {
-            tail.push((BTail::Adapt, 0, n));
-            tail.push((BTail::Adapt, 1, n));
+            tail.extend((0..4).map(|stage| (BTail::Adapt, stage, n)));
         }
         tail
     }
@@ -476,19 +476,19 @@ impl Tracer {
     /// then, but the render did not *end*, which is what a person
     /// actually waits for.
     ///
-    /// Reads one plane (30n..31n), not the whole image: the buffer is 31
-    /// words a pixel, so a naive read would drag a quarter of a gigabyte
-    /// back for one flag each (`GpuArray::read_range`).
+    /// Reads one word: the length of the list of open pixels the last
+    /// sample's tail gathered (`gather.wgsl`, the word after the image).
+    /// It read the whole flag plane (30n..31n) and counted it on the CPU —
+    /// eight megabytes back for one number on a 1440² frame.
     pub fn unconverged(&self, gpu: &Gpu) -> Option<u32> {
         if self.adapt[3] == 0.0 {
             return None;
         }
         let n = (self.size.0 * self.size.1) as usize;
         let px = self.px.as_ref()?;
-        let flags = px.read_range(gpu, 30 * n, n);
         // A short read means the device declined; say nothing rather than
         // claim a converged frame and stop early.
-        (flags.len() == n).then(|| flags.iter().filter(|f| **f == 0).count() as u32)
+        px.read_range(gpu, Self::PX_WORDS * n, 1).first().copied()
     }
 
     pub fn set_adaptive(&mut self, adapt: [f32; 4]) {
@@ -572,7 +572,7 @@ impl Tracer {
             // a new buffer, which the device clears, nothing uploaded.
             let px = match self.px.take() {
                 Some(px) if self.size == (w, h) => px,
-                _ => GpuArray::zeroed(gpu, Self::PX_WORDS * n as usize),
+                _ => GpuArray::zeroed(gpu, Self::PX_WORDS * n as usize + 1),
             };
             self.pass.clear();
             self.vis = drawn.then(|| self.visibility(gpu, &cam, w, h));
@@ -607,7 +607,9 @@ impl Tracer {
                     BTail::Edge => self.pass.add::<Edge>(gpu, n, cam, &[px.buffer(), self.class.buffer()]),
                     BTail::Adapt => match stage {
                         0 => self.pass.add::<Adapt>(gpu, n, cam, &[px.buffer()]),
-                        _ => self.pass.add::<AdaptDilate>(gpu, n, cam, &[px.buffer()]),
+                        1 => self.pass.add::<AdaptDilate>(gpu, n, cam, &[px.buffer()]),
+                        2 => self.pass.add::<AdaptClear>(gpu, n, cam, &[px.buffer()]),
+                        _ => self.pass.add::<AdaptGather>(gpu, n, cam, &[px.buffer()]),
                     },
                 };
             }
@@ -658,7 +660,7 @@ impl Tracer {
         let of = |n: usize, each: usize| (n * each) as u64;
         let mut total = 0u64;
         for a in &self.nodes {
-            total += of(a.len(), std::mem::size_of::<Wide>());
+            total += of(a.len(), std::mem::size_of::<Node>());
         }
         for a in &self.faces {
             total += of(a.len(), std::mem::size_of::<[u32; 4]>());
@@ -685,14 +687,20 @@ impl Tracer {
     /// converged flag, 30n..31n the flag after the dilation — the one the
     /// tracer obeys — and 31n..32n the samples THIS pixel has taken
     /// (Cycles' `pass_sample_count`, `util.wgsl`'s `adapt_count`).
-    pub(crate) const PX_WORDS: usize = 32;
+    ///
+    /// 32n..33n is the list of pixels the next sample traces when Adaptive
+    /// Sampling is on, and 33n..34n how many of a pixel's samples met
+    /// nothing (`emit`'s `missed`), which the light is not averaged over.
+    /// The one word after the image is the list's length (`gather.wgsl`) —
+    /// which is why the buffer is `PX_WORDS · n + 1`.
+    pub(crate) const PX_WORDS: usize = 34;
 
     /// The most pixels one image may hold on `gpu`. The image is one
     /// binding of `PX_WORDS` words a pixel, and a device caps a binding —
     /// at 128 MiB on many, about 1.4 million pixels — past which creating
     /// the pass is a validation error that ends the render thread.
     pub fn max_pixels(gpu: &Gpu) -> u64 {
-        gpu.max_binding() / (Self::PX_WORDS as u64 * 4)
+        gpu.max_binding().saturating_sub(4) / (Self::PX_WORDS as u64 * 4)
     }
 
     /// Denoise what has been traced so far, replacing the displayed image.
@@ -733,7 +741,7 @@ impl Tracer {
             // Tuned on Female-01: a normal has to agree closely, an albedo
             // less so (a noisy albedo is still a texture), and depth is
             // relative so the same figure works at any scale.
-            strength: [64.0, 8.0, 40.0, 1.0 / (self.frame + 1) as f32],
+            strength: [64.0, 8.0, 40.0, 0.0],
             view: cam.view,
             keep: u32::from(keep),
             ..Default::default()
