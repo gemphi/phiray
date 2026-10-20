@@ -110,3 +110,37 @@ fn a_change_to_the_linear_pixels_shows_through_the_transform() {
         assert!(ratio > 0.5, "{view:?}: the transform is concave, so the drop is less than half: {ratio}");
     }
 }
+
+/// A Filmic look swaps the contrast curve: Very High Contrast pushes a dim
+/// wall darker and Very Low Contrast lifts it, against the base Filmic —
+/// the direction Blender's `filmic_to_*.spi1d` curves move the midtones.
+#[test]
+fn a_filmic_look_bends_the_midtones_its_way() {
+    let Some(gpu) = Ray::gpu() else {
+        eprintln!("no GPU adapter; skipped");
+        return;
+    };
+    let mut tr = Tracer::new(&gpu, &wall(), &Atlas::default()).expect("scene");
+    tr.set_mode(Mode::Rendered);
+    let shown = |tr: &mut Tracer, look: phiray::Look| {
+        let mut cam = camera(View::Filmic);
+        cam.view = View::Filmic.words_with(0.0, 0.0, look);
+        let (_, mut done) = tr.render(&gpu, cam, W, W);
+        let mut guard = 0;
+        while !done && guard < 200 {
+            guard += 1;
+            (_, done) = tr.render(&gpu, cam, W, W);
+        }
+        let px = tr.pixels(&gpu);
+        // 4 bytes a pixel; the centre pixel's red channel.
+        px[(4 * (W * (W / 2) + W / 2)) as usize] as f32
+    };
+    let base = shown(&mut tr, phiray::Look::None);
+    let high = shown(&mut tr, phiray::Look::VeryHighContrast);
+    let low = shown(&mut tr, phiray::Look::VeryLowContrast);
+    // The wall shows above middle grey here (base ≈ 143/255), so more
+    // contrast pushes it further from the middle — brighter — and less
+    // contrast pulls it back towards it.
+    assert!(high > base && base > low, "high {high} base {base} low {low}");
+    assert!(high - base > 2.0 && base - low > 2.0, "the looks actually move it: high {high} base {base} low {low}");
+}

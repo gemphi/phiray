@@ -439,7 +439,46 @@ impl View {
 
     /// The `Camera::view` words for this transform.
     pub fn words(self, exposure: f32, gamma: f32) -> [f32; 4] {
-        [self as u32 as f32, exposure, gamma, 0.0]
+        self.words_with(exposure, gamma, Look::None)
+    }
+
+    /// The words with a Look (`view_settings.look`); the kernel applies it
+    /// only to Filmic, whose looks are curve swaps (`view.wgsl`'s `LOOKS`).
+    pub fn words_with(self, exposure: f32, gamma: f32, look: Look) -> [f32; 4] {
+        [self as u32 as f32, exposure, gamma, look as u32 as f32]
+    }
+}
+
+/// Blender's Filmic looks (`view_settings.look`, `config.ocio`): each is a
+/// contrast curve in Filmic Log space replacing the base
+/// `filmic_to_0-70_1-03` curve, so the kernel swaps the Filmic table for
+/// the look's (`view.wgsl`). The AgX looks ("AgX - Punchy", …) work
+/// differently and are not drawn; they read as `None`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Look {
+    #[default]
+    None,
+    VeryHighContrast,
+    HighContrast,
+    MediumHighContrast,
+    MediumLowContrast,
+    LowContrast,
+    VeryLowContrast,
+}
+
+impl Look {
+    /// From Blender's name; "Medium Contrast" is the base curve, so it and
+    /// anything unknown read as `None`.
+    pub fn from_blender(name: &str) -> Self {
+        match name {
+            "Very High Contrast" => Self::VeryHighContrast,
+            "High Contrast" => Self::HighContrast,
+            "Medium High Contrast" => Self::MediumHighContrast,
+            "Medium Low Contrast" => Self::MediumLowContrast,
+            "Low Contrast" => Self::LowContrast,
+            "Very Low Contrast" => Self::VeryLowContrast,
+            _ => Self::None,
+        }
     }
 }
 
