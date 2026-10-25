@@ -119,8 +119,23 @@ impl GpuAdapters {
     }
 
     /// Every adapter, as the drivers list them.
+    #[cfg(not(target_family = "wasm"))]
     pub fn all() -> &'static [GpuAdapter] {
         FOUND.get_or_init(|| pollster::block_on(Self::instance().enumerate_adapters(wgpu::Backends::all())).iter().map(GpuAdapter::of).collect())
+    }
+
+    /// Every adapter known so far — in a browser, the one `chosen()` found
+    /// when the device opened, and nothing before that.
+    ///
+    /// Enumerating is async and this function is not, so the desktop body
+    /// blocks on it; on a page's one thread that panics rather than waits.
+    /// `chosen()` fills `FOUND` on its way to the device, so by the time
+    /// Preferences ▸ System can be opened there is something here. Before
+    /// that the list is empty, which the panel already words as "No GPU
+    /// found".
+    #[cfg(target_family = "wasm")]
+    pub fn all() -> &'static [GpuAdapter] {
+        FOUND.get().map_or(&[], Vec::as_slice)
     }
 
     /// Prefer the adapter `name` names (`None`: the best ranked).

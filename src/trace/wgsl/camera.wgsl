@@ -49,7 +49,7 @@ struct Camera {
     // 2 Gaussian, 3 Blackman-Harris), width px, filter glossy, caustics
     // bits (1 reflective, 2 refractive)].
     integrator: vec4<f32>,
-    lights: array<Light, 16>,
+    lights: array<Light, 32>,
 }
 struct Light { pos: vec3<f32>, kind: u32, color: vec3<f32>, size: f32, dir: vec3<f32>, cone: f32, right: vec3<f32>, size_y: f32, shape: u32, blend: f32, spot_scale: vec2<f32> }
 // `Light::shape` (`eLightAreaShape`): the two rounded shapes. Here rather

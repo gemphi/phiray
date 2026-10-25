@@ -85,6 +85,10 @@ pub struct Gpu {
 impl Gpu {
     /// A device of its own on the best adapter (`adapter.rs`); `None` when
     /// there is none. The app uses [`Gpu::shared`].
+    ///
+    /// **Panics in a browser**, because `block_on` does on a page's one
+    /// thread. Nothing on the web path may call this: use
+    /// [`Gpu::open_shared`].
     pub fn new() -> Option<Self> {
         pollster::block_on(Self::open())
     }
@@ -92,12 +96,45 @@ impl Gpu {
     /// The process's device, opened on first use — `None` when the machine
     /// has no adapter. Every caller gets the same device until
     /// [`Gpu::switch`] replaces it.
+    #[cfg(not(target_family = "wasm"))]
     pub fn shared() -> Option<Self> {
         shared::with(|slot| slot.get_or_insert_with(Self::new).clone())?
     }
 
+    /// The device [`Gpu::open_shared`] opened, and never an attempt to open
+    /// one here.
+    ///
+    /// Opening needs `await`, and the only way to reach an async result from
+    /// a synchronous function is to block — which on the one thread a page
+    /// has does not wait, it panics (see [`Gpu::open`]). So a browser build
+    /// opens the device once at startup and every later caller reads the
+    /// result from here: the viewport's refine pass, Preferences ▸ System,
+    /// the skinner. Until that future lands this is `None`, which those
+    /// callers already handle, because it is what a machine with no adapter
+    /// returns.
+    #[cfg(target_family = "wasm")]
+    pub fn shared() -> Option<Self> {
+        Self::opened()
+    }
+
+    /// Open the shared device without blocking, and keep it — what
+    /// [`Gpu::shared`] cannot do in a browser.
+    ///
+    /// Idempotent: a device already open is returned as it is, and so is an
+    /// earlier "there is no adapter", so a second caller does not ask the
+    /// browser for a second device.
+    pub async fn open_shared() -> Option<Self> {
+        if let Some(known) = shared::try_with(|slot| slot.clone()).flatten() {
+            return known;
+        }
+        let gpu = Self::open().await;
+        shared::with(|slot| *slot = Some(gpu.clone()));
+        gpu
+    }
+
     /// Open the device again on the adapter `preferred` names (`None`: the
     /// best), and make it the shared one; what it opened on.
+    #[cfg(not(target_family = "wasm"))]
     pub fn switch(preferred: Option<String>) -> Option<GpuAdapter> {
         GpuAdapters::prefer(preferred);
         let gpu = Self::new();
@@ -107,6 +144,16 @@ impl Gpu {
             GENERATION.fetch_add(1, Ordering::SeqCst);
         });
         picked
+    }
+
+    /// A browser exposes one device and no choice of adapter, and reopening
+    /// it would need `await` ([`Gpu::open_shared`]). The preference is
+    /// recorded so the panel still reads back what was asked for, and the
+    /// open device stays.
+    #[cfg(target_family = "wasm")]
+    pub fn switch(preferred: Option<String>) -> Option<GpuAdapter> {
+        GpuAdapters::prefer(preferred);
+        Self::in_use()
     }
 
     /// Bumped each time [`Gpu::switch`] replaces the shared device, so a
