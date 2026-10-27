@@ -145,9 +145,12 @@ impl Tracer {
             compile(gpu);
             (name, at.elapsed().as_secs_f64() * 1000.0)
         };
-        // Preview goes LAST, and that ordering is load-bearing.
+        // Preview goes LAST, so the kernels anyone is likely to want are
+        // ready first. A compile now holds only its own kernel's slot
+        // (`Gpu::pipeline`), so nothing else waits behind it either; before
+        // that it held the device's whole pipeline lock:
         //
-        // These compiles hold the device's pipeline lock one at a time, and
+        // These compiles held the device's pipeline lock one at a time, and
         // on this driver Material Preview takes **248 seconds** while the
         // path tracer takes 145 ms (session log, 2026-10-18: `Solid 0,
         // Preview 247997, Wire 3006, Trace 145`). Compiled second, as it

@@ -19,7 +19,7 @@ pub use raster::Visibility;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 /// How long a readback may block before the caller gives up and takes the
@@ -76,8 +76,10 @@ pub struct Gpu {
     pub info: wgpu::AdapterInfo,
     /// The adapter as the Preferences list it.
     pub adapter: GpuAdapter,
-    /// Compute pipelines compiled on this device, by kernel.
-    pipelines: Arc<Mutex<HashMap<u64, wgpu::ComputePipeline>>>,
+    /// Compute pipelines compiled on this device, by kernel: a slot each,
+    /// so compiling one kernel holds up only the callers that want that
+    /// kernel ([`Gpu::pipeline`]).
+    pipelines: Arc<Mutex<HashMap<u64, Arc<OnceLock<wgpu::ComputePipeline>>>>>,
     /// Render pipelines compiled on this device (the visibility prepass).
     rasters: Arc<Mutex<HashMap<u64, wgpu::RenderPipeline>>>,
 }
@@ -175,14 +177,25 @@ impl Gpu {
 
     /// Kernels compiled on this device so far.
     pub fn compiled(&self) -> usize {
-        self.pipelines.lock().map_or(0, |cache| cache.len())
+        self.pipelines.lock().map_or(0, |cache| cache.values().filter(|slot| slot.get().is_some()).count())
     }
 
     /// The pipeline for `key`, compiled by `make` the first time this
     /// device is asked for it.
+    ///
+    /// The map is locked only to find the kernel's slot; the compile runs
+    /// in the slot. It used to run under the map's lock, and Material
+    /// Preview takes four and a half minutes to compile on a GTX 1660 Ti:
+    /// while `Tracer::warm` compiled it after the first frame, every
+    /// dispatch of every other kernel — the viewport's Solid, already
+    /// compiled, an F12 render — queued behind it, and the viewport stood
+    /// still for those minutes whatever the user did.
     pub(crate) fn pipeline(&self, key: u64, make: impl FnOnce() -> wgpu::ComputePipeline) -> wgpu::ComputePipeline {
-        let mut cache = self.pipelines.lock().unwrap_or_else(|e| e.into_inner());
-        cache.entry(key).or_insert_with(make).clone()
+        let slot = {
+            let mut cache = self.pipelines.lock().unwrap_or_else(|e| e.into_inner());
+            Arc::clone(cache.entry(key).or_default())
+        };
+        slot.get_or_init(make).clone()
     }
 
     /// The render pipeline for `key`, compiled by `make` the first time.
