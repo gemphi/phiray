@@ -124,3 +124,36 @@ fn denoising_what_is_shown_keeps_the_samples() {
     tracer.denoise(&gpu);
     assert_ne!(tracer.radiance(&gpu), before, "a finished render's denoise replaces them");
 }
+
+/// On a transparent film a pixel that met nothing must come out of the
+/// filter with no colour, as Blender writes it. LOOK-01 (2026-10-27) came
+/// out wrapped in a pastel halo at alpha 0: such pixels were lent the light
+/// of the surface beside them and divided it by the share of their samples
+/// that met something — none (`denoise.wgsl`). This scene does not reach
+/// that path (a plain miss's depth keeps it out of a surface's
+/// neighbourhood), so it guards the plain case only; the halo itself was
+/// checked on LOOK-01's render, alpha-0 pixels all black after the fix.
+#[test]
+fn a_pixel_that_met_nothing_keeps_no_light_after_denoising() {
+    let Some(gpu) = Ray::gpu() else { return };
+    let (_, atlas, cam) = scene();
+    let n = [0.0, 0.0, 1.0];
+    let q = [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]];
+    let pale = [0.8, 0.8, 0.8, 1.0];
+    let tris = vec![
+        Tri::new([q[0], q[1], q[2]], [n; 3], pale).with_pbr(1.0, 0.0),
+        Tri::new([q[0], q[2], q[3]], [n; 3], pale).with_pbr(1.0, 0.0),
+    ];
+    let clear = Camera { film: [1, 0, 0, 0], ..cam };
+    let mut tracer = Tracer::new(&gpu, &tris, &atlas).unwrap();
+    tracer.set_samples(12);
+    while !tracer.sample(&gpu, clear, SIDE, SIDE).1 {}
+    tracer.denoise(&gpu);
+    let px = tracer.pixels(&gpu);
+    let centre = (((SIDE / 2) * SIDE + SIDE / 2) * 4) as usize;
+    assert_eq!(px[centre + 3], 255, "the quad is in the frame");
+    let lit: Vec<usize> = (0..(SIDE * SIDE) as usize)
+        .filter(|i| px[i * 4 + 3] == 0 && px[i * 4..i * 4 + 3].iter().any(|c| *c > 2))
+        .collect();
+    assert!(lit.is_empty(), "{} pixels at alpha 0 carry light, the first {:?}", lit.len(), lit.first().map(|i| &px[i * 4..i * 4 + 4]));
+}

@@ -18,10 +18,10 @@ const XRAY_LAYERS: u32 = 32u;
 struct Shaded { col: vec3<f32>, nv: vec3<f32> }
 
 fn solid_at(h: Hit, d: vec3<f32>, facing: bool) -> Shaded {
-    let t = tri_at(h.tri);
+    let t = tri_at(h);
     let w = 1.0 - h.u - h.v;
     let bary = vec3<f32>(w, h.u, h.v);
-    let ng0 = normalize(cross(t.b - t.a, t.c - t.a));
+    let ng0 = world_ng(h, t);
     let turn = select(1.0, -1.0, facing && dot(ng0, d) >= 0.0);
     var n = t.na * w + t.nb * h.u + t.nc * h.v;
     n = select(ng0, normalize(n), dot(n, n) > 1e-12) * turn;
@@ -43,7 +43,7 @@ fn solid_at(h: Hit, d: vec3<f32>, facing: bool) -> Shaded {
     // Material, as `SceneState::has_color` falls back.
     let painted = p.shade.y == 5u && p.insts.z != 0u;
     if (p.shade.y == 4u || p.shade.y == 1u || p.shade.y == 2u || painted) {
-        let iw = inst_at(face(h.tri).w >> 16u);
+        let iw = inst_at(h.inst);
         if (p.shade.y == 4u) { base = vec3<f32>(tf(iw + 28u), tf(iw + 29u), tf(iw + 30u)); }
         else if (p.shade.y == 1u) { base = random_color(data[iw + 31u]); }
         else if (p.shade.y == 2u) { base = p.single.rgb; }
@@ -205,18 +205,21 @@ fn xray(o: vec3<f32>, d: vec3<f32>, background: vec3<f32>) -> Xray {
     var near = INF;
     var ahead = 0.0;
     var last = 0xffffffffu;
+    var last_inst = 0u;
     for (var k = 0u; k < XRAY_LAYERS; k++) {
         let h = trace(o + d * ahead, d, INF, false);
         if (h.tri == 0xffffffffu) { break; }
         let t = ahead + h.t;
         ahead = t + max(t, 1.0) * 1e-5;
-        // The same face met again at the step's edge is not a new layer.
-        if (h.tri == last) { continue; }
+        // The same face of the same instance met again at the step's edge
+        // is not a new layer.
+        if (h.tri == last && h.inst == last_inst) { continue; }
         last = h.tri;
+        last_inst = h.inst;
         near = min(near, t);
-        let a = alpha * clamp(tri_at(h.tri).color.a, 0.0, 1.0);
+        let a = alpha * clamp(tri_at(h).color.a, 0.0, 1.0);
         let w = xray_weight(t, d) * a;
-        accum += solid_at(Hit(t, h.tri, h.u, h.v), d, false).col * w;
+        accum += solid_at(Hit(t, h.tri, h.u, h.v, h.inst), d, false).col * w;
         weight += w;
         reveal *= 1.0 - a;
     }
@@ -268,11 +271,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Backface Culling (`DRW_STATE_CULL_BACK`): a face turned away is not
     // drawn, so the ray goes on past it to what is behind.
     for (var k = 0u; k < XRAY_LAYERS && p.shade.z != 0u && h.tri != 0xffffffffu; k++) {
-        let t = tri_at(h.tri);
-        if (dot(cross(t.b - t.a, t.c - t.a), d) < 0.0) { break; }
+        let t = tri_at(h);
+        if (dot(world_ng(h, t), d) < 0.0) { break; }
         let ahead = h.t + max(h.t, 1.0) * 1e-5;
         let next = trace(o + d * ahead, d, INF, false);
-        h = Hit(ahead + next.t, next.tri, next.u, next.v);
+        h = Hit(ahead + next.t, next.tri, next.u, next.v, next.inst);
     }
     if (h.tri == 0xffffffffu) {
         let g = grid_over(o, d, INF, pix);
@@ -288,8 +291,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let g = grid_over(o, d, h.t, pix);
     // The hit's view depth: along the view axis from the eye (perspective)
     // or the far origin (orthographic), in Blender units.
-    fx_store(i, s.col, g, (face(h.tri).w >> 16u) + 1u, s.nv, -h.t * p.units * dot(d, -p.back));
-    outline_store(i, (face(h.tri).w >> 16u) + 1u);
+    fx_store(i, s.col, g, h.inst + 1u, s.nv, -h.t * p.units * dot(d, -p.back));
+    outline_store(i, h.inst + 1u);
     // Standard view transform: scene-linear → sRGB display.
     taa_sample(i, srgb(s.col) * (1.0 - g.a) + g.rgb);
 }

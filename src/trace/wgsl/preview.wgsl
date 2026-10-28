@@ -133,9 +133,14 @@ fn preview_surface(h: Hit, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, first:
     let other = mat_second(m);
     let a = preview_lobe(h, m, o, d, foot, i, first);
     if (other == NO_MAT) { return a; }
-    let geo = tri_with(h.tri, m);
+    let geo = tri_with(h, m);
     let bary = vec3<f32>(1.0 - h.u - h.v, h.u, h.v);
-    let inst = inst_at(face(h.tri).w >> 16u);
+    let inst = inst_at(h.inst);
+    // A Fresnel or Layer Weight on the mix reads the smooth normal facing
+    // the ray (`procedural.wgsl`'s `proc_n`, `proc_wi`).
+    let n_own = geo.na * bary.x + geo.nb * bary.y + geo.nc * bary.z;
+    proc_wi = -d;
+    proc_n = select(-d, normalize(n_own) * select(-1.0, 1.0, dot(n_own, d) < 0.0), dot(n_own, n_own) > 1e-12);
     let w = mix_weight(m, object_point(inst, o + d * h.t), vec2<f32>(dot(geo.us, bary), dot(geo.vs, bary)), inst);
     let b = preview_lobe(h, mat_word(other), o, d, foot, i, false);
     let heavy = w > 0.5;
@@ -144,10 +149,10 @@ fn preview_surface(h: Hit, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, first:
 
 // One lobe: the surface `h` with the material whose first word is `m`.
 fn preview_lobe(h: Hit, m: u32, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, first: bool) -> Layer {
-    let t = tri_with(h.tri, m);
+    let t = tri_with(h, m);
     let w = 1.0 - h.u - h.v;
     let bary = vec3<f32>(w, h.u, h.v);
-    let ng0 = normalize(cross(t.b - t.a, t.c - t.a));
+    let ng0 = world_ng(h, t);
     let front = dot(ng0, d) < 0.0;
     let ng = select(-ng0, ng0, front);
     var n = t.na * w + t.nb * h.u + t.nc * h.v;
@@ -156,10 +161,12 @@ fn preview_lobe(h: Hit, m: u32, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, f
     if (t.nmap != NO_TEX) { n = mapped_normal_lod(t, n, bary, mip_level(t, t.nmap, foot, cos)); }
     let hit = o + d * h.t;
     let uv = vec2<f32>(dot(t.us, bary), dot(t.vs, bary));
-    let inst = inst_at(face(h.tri).w >> 16u);
+    let inst = inst_at(h.inst);
     let pobj = object_point(inst, hit);
+    proc_wi = -d;
     n = proc_normal(m, n, pobj, uv, inst, foot);
     if (dot(n, -d) < 0.0) { n = ng; }
+    proc_n = n;
     let off = ng * (p.eps + h.t * 1e-5);
     let pos = hit + off;
     var base = proc_base(m, max(t.color.rgb, vec3<f32>(0.0)), pobj, uv, inst);
@@ -273,7 +280,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         if (layer == 0u) {
             first_t = h.t;
-            outline_store(i, (face(h.tri).w >> 16u) + 1u);
+            outline_store(i, h.inst + 1u);
         }
         let lay = preview_surface(h, o, d, footprint(first_t), i, layer == 0u);
         col += thr * lay.alpha * lay.rgb;

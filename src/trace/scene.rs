@@ -1,19 +1,20 @@
 //! Compact GPU scene: shared vertices (position + packed normal/UV, 32 bytes),
 //! faces (3 vertex ids + material, 16 bytes) and a material table — about a
-//! quarter of the memory of one 160-byte [`Tri`] per triangle.
+//! quarter of the memory of one 160-byte [`Tri`] per triangle. The faces
+//! and vertices belong to meshes (`mesh.rs`), each placed by any number of
+//! instances (`instance.rs`): one `Geometry`, many `Object`s, as Cycles'
+//! `scene/object.cpp` has it (roadmap §4.4, Step 1).
 
-use super::instance::{IDENTITY, Instance, MAX_INSTANCES};
+use super::instance::{IDENTITY, Instance};
 use super::kernel::{Atlas, Tri};
 use super::mat::Mat;
+use super::mesh::Mesh;
 use crate::bvh::Aabb;
 use std::collections::HashMap;
 
-/// A face's material id and instance id, packed in its fourth word.
+/// A face's material id: its fourth word, whole.
 pub fn face_mat(word: u32) -> u32 {
-    word & 0xffff
-}
-pub fn face_inst(word: u32) -> u32 {
-    word >> 16
+    word
 }
 
 /// Octahedral encoding of a unit normal into two floats.
@@ -31,13 +32,13 @@ fn oct(n: [f32; 3]) -> [f32; 2] {
 }
 
 /// Packed normal; outside the octahedron (2, 2) marks flat.
-fn pack(n: [f32; 3]) -> [f32; 2] {
+pub(super) fn pack(n: [f32; 3]) -> [f32; 2] {
     if n == [0.0; 3] { [2.0, 2.0] } else { oct(n) }
 }
 
 #[derive(Default)]
 pub struct Scene {
-    /// Object-space positions, instance by instance (`insts`).
+    /// Object-space positions, mesh by mesh (`meshes`).
     pub pos: Vec<[f32; 4]>,
     /// Octahedral normal (xy) + UV (zw). A zero normal packs to (0, 0) → flat.
     pub attr: Vec<[f32; 4]>,
@@ -45,16 +46,20 @@ pub struct Scene {
     /// 16 | a << 24` (`paint`); empty when no object has one — Solid's
     /// Color ▸ Attribute.
     pub colors: Vec<u32>,
-    /// Vertex ids + `material | instance << 16` (`face_mat`, `face_inst`).
+    /// Vertex ids + material (`face_mat`).
     pub faces: Vec<[u32; 4]>,
     pub mats: Vec<Mat>,
     pub atlas: Atlas,
-    /// The objects, each the owner of a run of faces and vertices; the one
-    /// being added to is the last. A scene built from world-space triangles
-    /// (`add`, `push`) has one, at the identity.
+    /// The meshes, each the owner of a run of faces and vertices; the one
+    /// being added to is the last while `open`.
+    pub meshes: Vec<Mesh>,
+    /// The objects, each a placement of one mesh. A scene built from
+    /// world-space triangles (`add`, `push`) has one, at the identity.
     pub insts: Vec<Instance>,
+    /// Whether the last mesh is still taking faces.
+    open: bool,
     verts: HashMap<[u32; 7], u32>,
-    mat_ids: HashMap<[u32; 120], u32>,
+    mat_ids: HashMap<[u32; 164], u32>,
 }
 
 impl Scene {
@@ -68,10 +73,9 @@ impl Scene {
         s
     }
 
-    /// Begin an object placed by `world` (Blender's `m[col][row]`): the
-    /// vertices and faces added next are its, in its own space. Returns its
-    /// id. Past `MAX_INSTANCES` the last instance keeps taking faces — a
-    /// scene of sixty-five thousand objects places the rest together.
+    /// Begin an object placed by `world` (Blender's `m[col][row]`): a new
+    /// mesh, which the vertices and faces added next join, in its own
+    /// space, and one instance of it. Returns the instance's id.
     pub fn instance(&mut self, world: [[f32; 4]; 4]) -> u32 {
         self.instance_of(world, [1.0; 3], super::hash::ObjectHash(0))
     }
@@ -80,12 +84,28 @@ impl Scene {
     /// linear) and the hash of its id name (`ObjectHash::of`), for Solid's
     /// Color ▸ Object and ▸ Random.
     pub fn instance_of(&mut self, world: [[f32; 4]; 4], color: [f32; 3], hash: super::hash::ObjectHash) -> u32 {
-        self.close_instance();
-        if self.insts.len() >= MAX_INSTANCES {
-            return self.insts.len() as u32 - 1;
-        }
-        self.insts.push(Instance::at(world, self.faces.len() as u32, self.pos.len() as u32).colored(color, hash.0));
+        self.close_mesh();
+        self.meshes.push(Mesh::from(self.faces.len() as u32, self.pos.len() as u32));
+        self.open = true;
+        self.insts.push(Instance::of(world, self.meshes.len() as u32 - 1).colored(color, hash.0));
         self.insts.len() as u32 - 1
+    }
+
+    /// Another object showing mesh `mesh` — one already begun, a
+    /// collection instance's member, say — placed by `world`: its faces
+    /// go up once and this draws them again (`make_duplis_collection`).
+    /// Closes the mesh being added to; a mesh that does not exist names
+    /// the last. Returns the instance's id.
+    pub fn place(&mut self, mesh: u32, world: [[f32; 4]; 4], color: [f32; 3], hash: super::hash::ObjectHash) -> u32 {
+        self.close_mesh();
+        let mesh = mesh.min(self.meshes.len().saturating_sub(1) as u32);
+        self.insts.push(Instance::of(world, mesh).colored(color, hash.0));
+        self.insts.len() as u32 - 1
+    }
+
+    /// The mesh instance `inst` places.
+    pub fn mesh_of(&self, inst: u32) -> u32 {
+        self.insts.get(inst as usize).map_or(0, |i| i.mesh)
     }
 
     /// Instance `inst` casts no shadow: Workbench's Viewport Display ▸
@@ -97,115 +117,51 @@ impl Scene {
         }
     }
 
-    /// The instance faces are being added to, the identity one when none
-    /// was begun.
-    fn current(&mut self) -> u32 {
-        if self.insts.is_empty() {
-            self.insts.push(Instance::at(IDENTITY, 0, 0));
+    /// Make sure a mesh is taking faces: the open one, else a new one at
+    /// the identity (a scene of world-space triangles).
+    fn current(&mut self) {
+        if !self.open {
+            self.instance(IDENTITY);
         }
-        self.insts.len() as u32 - 1
     }
 
-    /// The instances as a sealed scene would have them: the open one's
-    /// ranges ended here (a pose handed over unsealed, `Tracer::repose`).
-    pub fn placed(&self) -> Vec<Instance> {
-        let mut insts = self.insts.clone();
-        match insts.last_mut() {
-            Some(last) => {
+    /// The meshes as a sealed scene would have them: the open one's ranges
+    /// ended here (a pose handed over unsealed, `Tracer::repose`).
+    pub fn placed(&self) -> Vec<Mesh> {
+        let mut meshes = self.meshes.clone();
+        match (self.open, meshes.last_mut()) {
+            (true, Some(last)) => {
                 last.face_hi = self.faces.len() as u32;
                 last.vert_hi = self.pos.len() as u32;
+                last.fit(&self.pos);
             }
-            None => insts.push(Instance { face_hi: self.faces.len() as u32, vert_hi: self.pos.len() as u32, ..Instance::at(IDENTITY, 0, 0) }),
+            (_, None) => meshes.push(Mesh { face_hi: self.faces.len() as u32, vert_hi: self.pos.len() as u32, ..Mesh::from(0, 0) }),
+            _ => {}
         }
-        insts
+        meshes
     }
 
-    /// The open instance's ranges end here.
-    fn close_instance(&mut self) {
-        if let Some(last) = self.insts.last_mut() {
+    /// The open mesh's ranges end here, and its box is measured.
+    fn close_mesh(&mut self) {
+        if !self.open {
+            return;
+        }
+        self.open = false;
+        if let Some(last) = self.meshes.last_mut() {
             last.face_hi = self.faces.len() as u32;
             last.vert_hi = self.pos.len() as u32;
-            // The bounding box of its vertices, for Generated coordinates.
-            let verts = &self.pos[last.vert_lo as usize..last.vert_hi as usize];
-            if !verts.is_empty() {
-                let mut lo = [f32::INFINITY; 3];
-                let mut hi = [f32::NEG_INFINITY; 3];
-                for v in verts {
-                    for k in 0..3 {
-                        lo[k] = lo[k].min(v[k]);
-                        hi[k] = hi[k].max(v[k]);
-                    }
-                }
-                last.bounds = [lo, hi];
-            }
+            last.fit(&self.pos);
         }
     }
 
-    /// Add one triangle record.
-    pub fn add(&mut self, t: &Tri) {
-        let uv = [[t.us[0], t.vs[0]], [t.us[1], t.vs[1]], [t.us[2], t.vs[2]]];
-        self.push([t.a, t.b, t.c], [t.na, t.nb, t.nc], uv, Mat::of(t));
-    }
-
-    fn vert(&mut self, p: [f32; 3], n: [f32; 3], uv: [f32; 2]) -> u32 {
-        let o = pack(n);
-        let key = [p[0], p[1], p[2], o[0], o[1], uv[0], uv[1]].map(f32::to_bits);
-        let next = self.pos.len() as u32;
-        *self.verts.entry(key).or_insert_with(|| {
-            self.pos.push([p[0], p[1], p[2], 1.0]);
-            self.attr.push([o[0], o[1], uv[0], uv[1]]);
-            next
-        })
-    }
-
-    /// Append one vertex with no de-duplication (callers that already share
-    /// vertices, e.g. per mesh); returns its id. A zero normal = flat.
-    pub fn vertex(&mut self, p: [f32; 3], n: [f32; 3], uv: [f32; 2]) -> u32 {
-        let o = pack(n);
-        self.pos.push([p[0], p[1], p[2], 1.0]);
-        self.attr.push([o[0], o[1], uv[0], uv[1]]);
-        self.pos.len() as u32 - 1
-    }
-
-    /// Give vertex `v` its colour attribute, scene-linear `rgb` — kept as
-    /// sRGB bytes, Blender's byte colour; vertices never painted are white.
-    pub fn paint(&mut self, v: u32, rgb: [f32; 3]) {
-        if self.colors.len() < self.pos.len() {
-            self.colors.resize(self.pos.len(), 0xffff_ffff);
-        }
-        let byte = |c: f32| u32::from(super::srgb::Srgb::linear_to_byte(c));
-        if let Some(slot) = self.colors.get_mut(v as usize) {
-            *slot = byte(rgb[0]) | byte(rgb[1]) << 8 | byte(rgb[2]) << 16 | 0xff << 24;
-        }
-    }
-
-    /// Shared id of a material.
-    pub fn material(&mut self, mat: Mat) -> u32 {
-        let next = self.mats.len() as u32;
-        *self.mat_ids.entry(mat.key()).or_insert_with(|| {
-            self.mats.push(mat);
-            next
-        })
-    }
-
-    /// Append a face over existing vertex ids, in the current instance.
-    pub fn face(&mut self, v: [u32; 3], mat: u32) {
-        let inst = self.current();
-        self.faces.push([v[0], v[1], v[2], (mat & 0xffff) | (inst << 16)]);
-    }
-
-    pub fn push(&mut self, p: [[f32; 3]; 3], n: [[f32; 3]; 3], uv: [[f32; 2]; 3], mat: Mat) {
-        let m = self.material(mat);
-        let v = [0, 1, 2].map(|k| self.vert(p[k], n[k], uv[k]));
-        self.face(v, m);
-    }
-
-    /// Done adding: free the de-duplication maps and close the last instance.
+    /// Done adding: free the de-duplication maps and close the last mesh.
     pub fn seal(&mut self) {
         self.verts = HashMap::new();
         self.mat_ids = HashMap::new();
-        self.current();
-        self.close_instance();
+        if self.meshes.is_empty() {
+            self.current();
+        }
+        self.close_mesh();
     }
 
     pub fn len(&self) -> usize {
@@ -221,121 +177,33 @@ impl Scene {
         [p[0], p[1], p[2]]
     }
 
-    /// Each face's box in its object's space.
+    /// Each face's box in its mesh's space.
     pub fn boxes(&self) -> Vec<Aabb> {
         (0..self.len()).map(|f| Aabb::of_tri(self.corner(f, 0), self.corner(f, 1), self.corner(f, 2))).collect()
     }
 
     /// Put faces in BVH leaf order (`order[slot]` = old face). An order over
-    /// the whole array that keeps each instance's faces within its range.
+    /// the whole array that keeps each mesh's faces within its range.
     pub fn reorder(&mut self, order: &[u32]) {
         self.faces = order.iter().map(|&i| self.faces[i as usize]).collect();
     }
 
     /// Largest single buffer in bytes.
     pub fn biggest(&self) -> u64 {
-        [self.pos.len() * 32, self.faces.len() * 16, self.atlas.words().len() * 4, self.mats.len() * 448 + 64]
+        [self.pos.len() * 32, self.faces.len() * 16, self.atlas.words().len() * 4, self.mats.len() * std::mem::size_of::<Mat>() + 64]
             .into_iter()
             .max()
             .unwrap_or(0) as u64
     }
 
-    /// `[lamp count, face ids…, cdf bits…, materials…]` (see `wgsl/layout.wgsl`).
+    /// `[lamp count, face ids…, instance ids…, cdf bits…, materials…]`
+    /// (see `wgsl/layout.wgsl`).
     pub fn table(&self) -> Vec<u32> {
-        Self::table_of(&self.faces, &self.pos, &self.mats, &self.insts)
-    }
-
-    /// [`Scene::table`] over `faces` at `pos` placed by `insts` — a new pose
-    /// of the same faces (`trace/pose.rs`). An emitter's power is its area
-    /// in the world, so each corner is placed first.
-    pub fn table_of(faces: &[[u32; 4]], pos: &[[f32; 4]], mats: &[Mat], insts: &[Instance]) -> Vec<u32> {
-        let corner = |f: usize, k: usize| {
-            let p = pos[faces[f][k] as usize];
-            match insts.get(face_inst(faces[f][3]) as usize) {
-                Some(inst) => inst.to_world([p[0], p[1], p[2]]),
-                None => [p[0], p[1], p[2]],
-            }
-        };
-        let area = |f: usize| {
-            let (a, b, c) = (corner(f, 0), corner(f, 1), corner(f, 2));
-            let (e1, e2) = ([0, 1, 2].map(|k| b[k] - a[k]), [0, 1, 2].map(|k| c[k] - a[k]));
-            let cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
-            0.5 * cr.iter().map(|v| v * v).sum::<f32>().sqrt()
-        };
-        let power: Vec<f32> = mats.iter().map(|m| m.power_in(mats)).collect();
-        let (ids, pw): (Vec<u32>, Vec<f32>) = (0..faces.len())
-            .filter(|&f| power[face_mat(faces[f][3]) as usize] > 0.0)
-            .map(|f| (f as u32, area(f) * power[face_mat(faces[f][3]) as usize]))
-            .filter(|(_, p)| *p > 0.0)
-            .unzip();
-        let total: f32 = pw.iter().sum();
-        let mut run = 0.0;
-        let mut w = vec![ids.len() as u32];
-        w.extend(&ids);
-        w.extend(pw.iter().map(|p| {
-            run += p;
-            (run / total).to_bits()
-        }));
-        w.extend(mats.iter().flat_map(|m| m.key()));
-        w
+        super::lamps::table_of(&self.faces, &self.pos, &self.mats, &self.placed(), &self.insts)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::trace::NO_TEX;
+mod tests;
 
-    #[test]
-    fn shares_vertices_and_materials() {
-        let n = [[0.0, 0.0, 1.0]; 3];
-        let c = [0.5; 4];
-        let q = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]];
-        let tris = [Tri::new([q[0], q[1], q[2]], n, c), Tri::new([q[0], q[2], q[3]], n, c)];
-        let mut s = Scene::from_tris(&tris, &Atlas::default());
-        assert_eq!((s.pos.len(), s.faces.len(), s.mats.len()), (4, 2, 1));
-        assert_eq!(s.mats[0].tex, NO_TEX);
-        s.seal();
-        assert_eq!(s.insts.len(), 1, "world-space triangles: one instance, at the identity");
-        assert_eq!((s.insts[0].faces(), face_inst(s.faces[1][3]), face_mat(s.faces[1][3])), (0..2, 0, 0));
-        assert_eq!(oct([0.0, 0.0, -1.0]).map(|v| v.abs()), [1.0, 1.0]);
-    }
-}
-
-#[cfg(test)]
-mod instance_tests {
-    use super::*;
-
-    #[test]
-    fn each_instance_owns_a_run_of_faces_and_names_itself_in_them() {
-        let mut s = Scene::default();
-        let n = [0.0, 0.0, 1.0];
-        let a = s.instance(Instance::translation([5.0, 0.0, 0.0]));
-        let v = [s.vertex([0.0; 3], n, [0.0; 2]), s.vertex([1.0, 0.0, 0.0], n, [0.0; 2]), s.vertex([0.0, 1.0, 0.0], n, [0.0; 2])];
-        let plain = Tri::new([[0.0; 3]; 3], [n; 3], [0.5; 4]);
-        let m = s.material(Mat::of(&plain));
-        s.face(v, m);
-        let b = s.instance(IDENTITY);
-        let w = [s.vertex([0.0; 3], n, [0.0; 2]), s.vertex([2.0, 0.0, 0.0], n, [0.0; 2]), s.vertex([0.0, 2.0, 0.0], n, [0.0; 2])];
-        s.face(w, m);
-        s.face(w, m);
-        s.seal();
-        assert_eq!((a, b), (0, 1));
-        assert_eq!(s.insts[0].faces(), 0..1);
-        assert_eq!(s.insts[1].faces(), 1..3);
-        assert_eq!((s.insts[0].vert_lo, s.insts[0].vert_hi, s.insts[1].vert_lo, s.insts[1].vert_hi), (0, 3, 3, 6));
-        assert_eq!(face_inst(s.faces[0][3]), 0);
-        assert_eq!(face_inst(s.faces[2][3]), 1);
-        assert_eq!(face_mat(s.faces[2][3]), 0);
-        // The light table places an emitter's corners in the world.
-        let mut glow = Scene::default();
-        glow.instance(Instance::translation([0.0, 0.0, 9.0]));
-        let lit = Mat::of(&plain.with_optics([4.0, 4.0, 4.0], 0.0, 1.5));
-        let v = [glow.vertex([0.0; 3], n, [0.0; 2]), glow.vertex([1.0, 0.0, 0.0], n, [0.0; 2]), glow.vertex([0.0, 1.0, 0.0], n, [0.0; 2])];
-        let lm = glow.material(lit);
-        glow.face(v, lm);
-        glow.seal();
-        let table = glow.table();
-        assert_eq!(table[0], 1, "one emitter, its area unchanged by a translation");
-    }
-}
+mod add;

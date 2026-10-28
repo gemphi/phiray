@@ -79,13 +79,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         put3(select(14u, 17u, (p.round & 1u) == 1u) * p.n, i, out);
         return;
     }
+    let k = inv_n(i);
+    // The share of this pixel's samples that met something, as `emit`
+    // counts it: `k - gone` samples, at least one's worth. A pixel none of
+    // whose samples met anything has no light, whatever its taps lent it —
+    // divided by a share of nothing, the surface light it borrowed came out
+    // a million times over, the pastel halo round every figure on a
+    // transparent film (LOOK-01, 2026-10-27).
+    let met = 1.0 - f_at(33u * p.n + i) * k;
     // Put the texture back: this is the filtered scene-linear radiance.
-    let lin = out * max(albedo_of(i), vec3<f32>(0.05));
+    let lin = select(vec3<f32>(0.0), out * max(albedo_of(i), vec3<f32>(0.05)), met > 0.5 * k);
     // A finished render's it replaces the linear sums, so `Tracer::radiance`
     // — and an EXR — get the denoised image too; a refining viewport
     // (`p.keep`) keeps its sums, so the next sample lands on the truth.
     // Back to a sum over this pixel's own samples.
-    let k = inv_n(i);
     if (p.keep == 0u) { put3(1u * p.n, i, lin / k); }
     // Then the view transform once, and the grid overlay the tracer
     // accumulated, exactly as `emit` composes an un-denoised pixel.
@@ -93,8 +100,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid = v3_at(20u * p.n, i) * k;
     // `lin` is a mean over every sample; the light is over the ones that
     // met something (`emit`), so it is scaled up by the share that did.
-    let met = max(1.0 - f_at(33u * p.n + i) * k, 1e-6);
-    let shown = view_transform_of(lin / met, p.view) * (1.0 - cov) + grid;
+    let shown = view_transform_of(lin / max(met, k), p.view) * (1.0 - cov) + grid;
     put3(4u * p.n, i, shown);
     px[i] = pack(shown, f_at(24u * p.n + i) * k);
 }

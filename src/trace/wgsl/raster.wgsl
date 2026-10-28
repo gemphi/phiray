@@ -4,33 +4,40 @@
 // vertices pulled from the tracer's own buffers (`face`, `vert`, the
 // instance table), projected exactly as `solid.wgsl` casts its rays — so
 // the hit it writes per pixel is the one the ray would have found — and
-// the depth test keeps the nearest. The fragment writes the face, its
-// barycentrics and the distance along the ray (`vis.wgsl` reads them back
-// as a `Hit`). Depth is reversed (`p.vis.w`'s near plane over the distance,
+// the depth test keeps the nearest. Each mesh is one instanced draw over
+// the instances that show it (`Trees::draws`): `instance_index` names the
+// draw slot, `draw_inst` the instance placing this copy. The fragment
+// writes the face, the instance and its two barycentrics, each a whole
+// word: the instance took the word the distance along the ray used to
+// have, so `vis2.wgsl` works that out again from the face it names.
+// Rounding the barycentrics into half a word instead cost Wireframe a
+// least significant bit on a few dozen pixels of a tiled frame, which
+// `tiles_laid_together_are_the_whole_frame` compares byte for byte. Depth is reversed (`p.vis.w`'s near plane over the distance,
 // greater is nearer), for float precision far from the eye.
 
 struct VOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) @interpolate(flat) tri: u32,
     @location(1) bary: vec3<f32>,
-    @location(2) wpos: vec3<f32>,
+    @location(2) @interpolate(flat) inst: u32,
 }
 
-// Corner `k` of face `f`, in the world.
-fn corner_at(f: u32, k: u32) -> vec3<f32> {
+// Corner `k` of face `f`, in the world, placed by instance `i`.
+fn corner_at(f: u32, k: u32, i: u32) -> vec3<f32> {
     let v = face(f);
     let id = select(select(v.x, v.y, k == 1u), v.z, k == 2u);
     let ph = vert(id).p;
-    let w = inst_at(v.w >> 16u);
+    let w = inst_at(i);
     if ((data[w + 27u] & 1u) != 0u) { return ph.xyz; }
     return vec3<f32>(dot(inst_row(w), ph), dot(inst_row(w + 4u), ph), dot(inst_row(w + 8u), ph));
 }
 
 @vertex
-fn vs(@builtin(vertex_index) vi: u32) -> VOut {
+fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
     let f = vi / 3u;
     let k = vi % 3u;
-    let P = corner_at(f, k);
+    let inst = draw_inst(ii);
+    let P = corner_at(f, k, inst);
     // Camera space: `right`, `up`, `back` about the pivot.
     let c = P - p.pivot;
     let cx = dot(c, p.right);
@@ -59,19 +66,11 @@ fn vs(@builtin(vertex_index) vi: u32) -> VOut {
     out.clip = clip;
     out.tri = f;
     out.bary = vec3<f32>(f32(k == 0u), f32(k == 1u), f32(k == 2u));
-    out.wpos = P;
+    out.inst = inst;
     return out;
 }
 
 @fragment
 fn fs(in: VOut) -> @location(0) vec4<u32> {
-    // The distance along the pixel's ray: from the eye, or along `−back`
-    // from the orthographic origin `1e4 / units` behind the pivot.
-    var t: f32;
-    if (p.persp != 0u) {
-        t = length(in.wpos - (p.pivot + p.back * (p.dist / p.units)));
-    } else {
-        t = 1.0e4 / p.units - dot(in.wpos - p.pivot, p.back);
-    }
-    return vec4<u32>(in.tri, bitcast<u32>(in.bary.y), bitcast<u32>(in.bary.z), bitcast<u32>(t));
+    return vec4<u32>(in.tri, in.inst, bitcast<u32>(in.bary.y), bitcast<u32>(in.bary.z));
 }

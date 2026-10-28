@@ -24,7 +24,7 @@ const WIRE_LAYERS: u32 = 32u;
 // How much of this pixel the wire of the surface `h` covers, at `t` along
 // the ray.
 fn wire_at(h: Hit, t_at: f32, pix: f32) -> f32 {
-    let t = tri_at(h.tri);
+    let t = tri_at(h);
     let bary = vec3<f32>(1.0 - h.u - h.v, h.u, h.v);
 
     // Twice the triangle's area, and the length of the edge opposite each
@@ -73,13 +73,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         var near = INF;
         var ahead = 0.0;
         var last = 0xffffffffu;
+        var last_inst = 0u;
         for (var k = 0u; k < WIRE_LAYERS; k++) {
             let h = trace(o + d * ahead, d, INF, false);
             if (h.tri == 0xffffffffu) { break; }
             let t = ahead + h.t;
             ahead = t + max(t, 1.0) * 1e-5;
-            if (h.tri == last) { continue; }
+            if (h.tri == last && h.inst == last_inst) { continue; }
             last = h.tri;
+            last_inst = h.inst;
             let fade = select(p.see_through, 1.0, near >= INF);
             near = min(near, t);
             keep *= 1.0 - wire_at(h, t, pix) * fade;
@@ -96,7 +98,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         taa_sample(i, floor_grid(o, d, INF, pix, sky));
         return;
     }
-    outline_store(i, (face(h.tri).w >> 16u) + 1u);
+    outline_store(i, h.inst + 1u);
     let behind = floor_grid(o, d, h.t, pix, sky);
     taa_sample(i, mix(behind, p.env.rgb, wire_at(h, h.t, pix)));
 }

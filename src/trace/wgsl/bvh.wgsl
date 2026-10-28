@@ -33,7 +33,8 @@ fn safe_inv(d: vec3<f32>) -> vec3<f32> {
 
 // Instance `i`'s tree, walked in the object's own space: the ray is taken
 // there by the instance's inverse (its direction left unnormalised, so `t`
-// means the same along both rays), and a hit's `t` is the world's.
+// means the same along both rays), and a hit's `t` is the world's. The
+// hit remembers the instance: its mesh may be shown by many.
 fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<function, Hit>) {
     let w = inst_at(i);
     let root = data[w + 24u];
@@ -67,7 +68,7 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
                 let v = face(id);
                 let h = tri_t(vert(v.x).p.xyz, vert(v.y).p.xyz, vert(v.z).p.xyz, o, d);
                 if (h.x < (*best).t) {
-                    *best = Hit(h.x, id, h.y, h.z);
+                    *best = Hit(h.x, id, h.y, h.z, i);
                     if (first) { return; }
                 }
             }
@@ -94,7 +95,7 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
 // The top tree, over the instances' world bounds: each leaf names the
 // instances (`inst_order`) whose own trees the ray then walks.
 fn trace(o: vec3<f32>, d: vec3<f32>, tmax: f32, first: bool) -> Hit {
-    var best = Hit(tmax, 0xffffffffu, 0.0, 0.0);
+    var best = Hit(tmax, 0xffffffffu, 0.0, 0.0, 0u);
     let inv = safe_inv(d);
     if (box_t(node(0u), o, inv, best.t) >= INF) { return best; }
     var stack: array<u32, 32>;

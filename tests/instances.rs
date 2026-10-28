@@ -119,3 +119,69 @@ fn a_new_tree_after_a_move_draws_the_same_and_keeps_its_samples() {
     let plain = Tracer::new(&gpu, &wall(0.8), &Atlas::default()).expect("a scene");
     assert_eq!(plain.extent.round(), 3.0, "the wall's diagonal");
 }
+
+/// One wall facing the camera, its corner normals leaning `lean` along x
+/// (so the lighting shows which way they point), placed by `world`.
+fn leaning(world: [[f32; 4]; 4], lean: f32) -> Scene {
+    let mut s = Scene::default();
+    s.instance(world);
+    let q = [[-1.0, 0.0, -1.0], [1.0, 0.0, -1.0], [1.0, 0.0, 1.0], [-1.0, 0.0, 1.0]];
+    let len = (lean * lean + 1.0f32).sqrt();
+    let n = [lean / len, -1.0 / len, 0.0];
+    for tri in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
+        let t = Tri::new(tri, [n; 3], [0.8, 0.8, 0.8, 1.0]);
+        let m = s.material(Mat::of(&t));
+        let v = tri.map(|p| s.vertex(p, n, [0.0; 2]));
+        s.face(v, m);
+    }
+    s
+}
+
+/// `scene` in `mode`, every sample in.
+fn settled(gpu: &phiray::Gpu, scene: Scene, mode: Mode, cam: Camera) -> Vec<u8> {
+    let mut t = Tracer::from_scene(gpu, scene).expect("a scene");
+    t.set_mode(mode);
+    let (mut px, mut done) = t.render(gpu, cam, W, W);
+    while !done {
+        (px, done) = t.render(gpu, cam, W, W);
+    }
+    px
+}
+
+/// A scale of −1 is how Blender files make a mirrored half or a twin (302
+/// such meshes in one CW-POSES scene). Placing a face by it turns its
+/// winding over while its normals, under the inverse-transpose, still point
+/// out — so a kernel that took the side a face is seen from off the world
+/// cross product shaded the mirrored copy from inside: its normals turned
+/// away from the viewer in Solid and Material Preview, and Backface Culling
+/// took it away entirely. The wall here is its own mirror image across
+/// x = 0, so mirrored it must draw exactly as the plain wall whose normals
+/// lean the mirrored way.
+#[test]
+fn a_mirrored_instance_is_lit_as_the_one_it_mirrors() {
+    let Some(gpu) = Ray::gpu() else { return };
+    // Closer than `camera`: the wall fills most of the frame, and the
+    // corner is sky.
+    let near = Camera { scale: 0.4, ..camera() };
+    let t = [0.0, 0.5, 0.0];
+    let plain = placed(1.0, 0.0, t);
+    let mut mirror = plain;
+    mirror[0][0] = -1.0;
+    let mid = |px: &[u8]| -> [u8; 3] {
+        let i = ((W / 2 * W + W / 2) * 4) as usize;
+        [px[i], px[i + 1], px[i + 2]]
+    };
+    for mode in [Mode::Solid, Mode::Preview] {
+        let want = settled(&gpu, leaning(plain, -0.5), mode, near);
+        let other = settled(&gpu, leaning(plain, 0.5), mode, near);
+        assert!(differing(&want, &other) > (W * W / 8) as usize, "{mode:?}: the lean shows in the lighting, or this proves nothing");
+        let got = settled(&gpu, leaning(mirror, 0.5), mode, near);
+        let off = differing(&got, &want);
+        assert!(off <= (W * W / 100) as usize, "{mode:?}: {off} pixels differ from the wall it mirrors, centre {:?} vs {:?}", mid(&got), mid(&want));
+    }
+    let culling = Camera { shade: [0, 0, 1, 0], ..near };
+    let kept = settled(&gpu, leaning(mirror, 0.5), Mode::Solid, culling);
+    let corner = [kept[(W + 1) as usize * 4], kept[(W + 1) as usize * 4 + 1], kept[(W + 1) as usize * 4 + 2]];
+    assert_ne!(mid(&kept), corner, "Backface Culling keeps the mirrored wall, which faces the viewer; the corner is sky");
+    assert!(differing(&kept, &settled(&gpu, leaning(plain, -0.5), Mode::Solid, culling)) <= (W * W / 100) as usize);
+}

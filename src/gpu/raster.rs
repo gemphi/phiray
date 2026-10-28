@@ -1,8 +1,10 @@
 //! The visibility prepass: a raster pipeline that draws every face of the
-//! scene into a render target of hits — face, barycentrics, distance — with
-//! a depth test, the way Workbench's prepass finds what each pixel sees,
-//! then copies the target into a buffer the compute kernels read
-//! (`vis2.wgsl`). The shader is `trace/wgsl/raster.wgsl`.
+//! scene into a render target of hits — face, instance, barycentrics,
+//! distance — with a depth test, the way Workbench's prepass finds what
+//! each pixel sees, then copies the target into a buffer the compute
+//! kernels read (`vis2.wgsl`). The shader is `trace/wgsl/raster.wgsl`.
+//! A mesh shown by many instances is one instanced draw (roadmap §4.4,
+//! Step 1), as `DRW_shgroup_call_instances` batches Workbench's.
 
 use super::{Gpu, GpuArray};
 use wgpu::util::DeviceExt;
@@ -104,9 +106,11 @@ impl Visibility {
         &self.hits
     }
 
-    /// Draw `faces` faces with `params` and copy the hits out. A pixel
+    /// Draw each of `draws` — `[first vertex, vertex count, first
+    /// instance slot, instance count]`, one instanced draw a mesh
+    /// (`Trees::draws`) — with `params` and copy the hits out. A pixel
     /// nothing covers reads face `u32::MAX`.
-    pub fn draw<P: bytemuck::Pod>(&self, gpu: &Gpu, params: &P, faces: u32) {
+    pub fn draw<P: bytemuck::Pod>(&self, gpu: &Gpu, params: &P, draws: &[[u32; 4]]) {
         gpu.queue.write_buffer(&self.params, 0, bytemuck::bytes_of(params));
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
@@ -129,7 +133,9 @@ impl Visibility {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.group, &[]);
-            pass.draw(0..faces * 3, 0..1);
+            for &[v0, nv, i0, ni] in draws {
+                pass.draw(v0..v0 + nv, i0..i0 + ni);
+            }
         }
         enc.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo { texture: self.target_texture(), mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },

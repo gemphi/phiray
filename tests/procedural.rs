@@ -156,3 +156,87 @@ fn a_procedural_mix_weight_and_a_bump_vary_by_pixel() {
         assert!(dev > flat + 1.0, "{mode:?}: the bump shows: deviation {dev} over a flat {flat}");
     }
 }
+
+/// A wide camera: the frame spans about ±46°, so the angle between the
+/// wall and the ray runs from head on at the centre to well past 40° in
+/// the corners — which is what a view-dependent slot answers to.
+fn wide_camera() -> Camera {
+    Camera { scale: 0.12, ..camera() }
+}
+
+/// A wall big enough to fill the wide frame, as two triangles.
+fn big_wall(color: [f32; 4]) -> [Tri; 2] {
+    let n = [0.0, -1.0, 0.0];
+    let q = |a: [f32; 3], b: [f32; 3], c: [f32; 3]| Tri::new([a, b, c], [n; 3], color).with_pbr(0.8, 0.0);
+    let (lo, hi) = (-20.0f32, 20.0f32);
+    [
+        q([lo, 0.0, lo], [hi, 0.0, lo], [hi, 0.0, hi]),
+        q([lo, 0.0, lo], [hi, 0.0, hi], [lo, 0.0, hi]),
+    ]
+}
+
+/// The mean luma of the frame's middle `n` × `n` block and of its four
+/// corner blocks — the head-on pixels against the grazing ones.
+fn centre_and_corners(px: &[u8], n: u32) -> (f32, f32) {
+    let luma = |x: u32, y: u32| {
+        let p = &px[((y * W + x) * 4) as usize..];
+        0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32
+    };
+    let block = |x0: u32, y0: u32| {
+        let mut sum = 0.0;
+        for y in y0..y0 + n {
+            for x in x0..x0 + n {
+                sum += luma(x, y);
+            }
+        }
+        sum / (n * n) as f32
+    };
+    let mid = (W - n) / 2;
+    let corners = [block(0, 0), block(W - n, 0), block(0, W - n), block(W - n, W - n)];
+    (block(mid, mid), corners.iter().sum::<f32>() / 4.0)
+}
+
+/// A Fresnel and a Layer Weight on the mix weight are the surface's angle
+/// to the ray, not a texture: the wall takes the second closure at its
+/// grazing corners and the first where it faces the camera
+/// (`svm_node_fresnel`, `svm_node_layer_weight`; the CPU twin and the
+/// hemispherical means are `phiray::fresnel`). A constant weight has no
+/// such gradient, which is what tells this apart from vignetting.
+#[test]
+fn a_fresnel_and_a_layer_weight_mix_by_the_angle_to_the_camera() {
+    let Some(gpu) = Ray::gpu() else {
+        eprintln!("no GPU adapter; skipped");
+        return;
+    };
+    let dark = [0.05, 0.02, 0.02, 1.0];
+    let light = [0.95, 0.95, 0.95, 1.0];
+    let scene = |slot: Option<Proc>, mix: f32| {
+        let mut scene = Scene::new(sky_atlas());
+        let other = scene.material(phiray::Mat::of(&big_wall(light)[0]));
+        for t in big_wall(dark) {
+            scene.add(&t.with_second(other, mix).with_procs(slot, None));
+        }
+        scene
+    };
+    let shot = |slot: Option<Proc>, mix: f32| {
+        let mut tr = Tracer::from_scene(&gpu, scene(slot, mix)).expect("scene");
+        tr.set_mode(Mode::Preview);
+        tr.set_samples(1);
+        let (px, _) = tr.render(&gpu, wide_camera(), W, W);
+        centre_and_corners(&px, 8)
+    };
+    // A constant weight of a half is the same mix everywhere.
+    let (flat_mid, flat_corner) = shot(None, 0.5);
+    assert!((flat_corner - flat_mid).abs() < 12.0, "a constant weight is flat: centre {flat_mid}, corners {flat_corner}");
+    // Facing at Blend 0.9 raises the cosine to the fifth: nothing head on,
+    // most of the second closure at the corners.
+    let (mid, corner) = shot(Some(Proc::layer_weight(2, 0.9, true)), 0.0);
+    assert!(corner > mid + 25.0, "Facing brightens the corners: centre {mid}, corners {corner}");
+    assert!(mid < flat_mid, "head on it is the first closure: {mid} vs {flat_mid}");
+    // A Fresnel at IOR 1.8 is the same shape, gentler.
+    let (f_mid, f_corner) = shot(Some(Proc::fresnel(2, 1.8)), 0.0);
+    assert!(f_corner > f_mid + 3.0, "Fresnel brightens the corners: centre {f_mid}, corners {f_corner}");
+    // And the Fresnel output of a Layer Weight runs the same way.
+    let (l_mid, l_corner) = shot(Some(Proc::layer_weight(2, 0.5, false)), 0.0);
+    assert!(l_corner > l_mid + 3.0, "Layer Weight Fresnel brightens the corners: centre {l_mid}, corners {l_corner}");
+}

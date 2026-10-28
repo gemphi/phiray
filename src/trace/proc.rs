@@ -28,6 +28,13 @@ pub const PROC_WHITE_NOISE_COLOR: u32 = 15;
 pub const PROC_GABOR_VALUE: u32 = 16;
 pub const PROC_GABOR_PHASE: u32 = 17;
 pub const PROC_GABOR_INTENSITY: u32 = 18;
+/// Fresnel ▸ Fac at the IOR in `detail` (`svm_node_fresnel`), and Layer
+/// Weight ▸ Fresnel / ▸ Facing at the Blend in `detail`
+/// (`svm_node_layer_weight`): the slot's value is the hit's angle to the
+/// ray, not a texture, so a Mix Shader keyed on either is per pixel.
+pub const PROC_FRESNEL: u32 = 19;
+pub const PROC_LAYER_FRESNEL: u32 = 20;
+pub const PROC_LAYER_FACING: u32 = 21;
 /// `Proc::kind`'s flag: the node's Normalize is on (Voronoi; Noise).
 pub const PROC_NORMALIZE: u32 = 256;
 
@@ -185,6 +192,23 @@ impl Proc {
     /// Whether the slot holds a texture.
     pub fn is_some(&self) -> bool {
         self.kind != 0
+    }
+
+    /// This texture as the second colour slot of a Base Color Mix: the
+    /// slot keeps the node's blend mode where a first slot keeps its
+    /// target, and its factor where a bump slot keeps its Strength.
+    pub fn mixed_over(self, blend: u32, fac: f32) -> Self {
+        Self { target: blend, strength: fac, ..self }
+    }
+
+    /// A Fresnel slot at `ior` (the node's default 1.45).
+    pub fn fresnel(target: u32, ior: f32) -> Self {
+        Self { detail: ior, scale: 1.0, ..Self::of(PROC_FRESNEL, target) }
+    }
+
+    /// A Layer Weight slot at `blend`, its Facing output when `facing`.
+    pub fn layer_weight(target: u32, blend: f32, facing: bool) -> Self {
+        Self { detail: blend, scale: 1.0, ..Self::of(if facing { PROC_LAYER_FACING } else { PROC_LAYER_FRESNEL }, target) }
     }
 
     /// The texture's kind without its flags.

@@ -44,14 +44,64 @@ const PROC_WHITE_NOISE_COLOR: u32 = 15u;
 const PROC_GABOR_VALUE: u32 = 16u;
 const PROC_GABOR_PHASE: u32 = 17u;
 const PROC_GABOR_INTENSITY: u32 = 18u;
+// Fresnel ▸ Fac, Layer Weight ▸ Fresnel and ▸ Facing: the hit's angle to
+// the ray (`svm_node_fresnel`, `svm_node_layer_weight`), from `proc_n`
+// and `proc_wi`, which the kernel sets per hit before reading a slot.
+const PROC_FRESNEL: u32 = 19u;
+const PROC_LAYER_FRESNEL: u32 = 20u;
+const PROC_LAYER_FACING: u32 = 21u;
 // `Proc::kind`'s flag: Normalize on (a Voronoi, or a Noise whose type
 // has one).
 const PROC_NORMALIZE: u32 = 256u;
 // `Proc::target`.
 const PROC_BASE: u32 = 1u;
 const PROC_MIX: u32 = 2u;
+// The second colour slot (`Mat::color_proc2` at `m + 120`): the other
+// colour of a Base Color Mix node. It keeps the node's blend mode where a
+// first slot keeps its target, and the Factor where a bump slot keeps its
+// Strength.
 // Blender's Bump node Filter Width default.
 const BUMP_FILTER_WIDTH: f32 = 0.1;
+
+// The hit the view-dependent slots read: its shading normal and the
+// direction back along the ray (Cycles' `sd->N`, `sd->wi`).
+var<private> proc_n: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
+var<private> proc_wi: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
+
+// `fresnel_dielectric_cos` (`closure/bsdf_util.h`): the reflectance at
+// `cosi` for a relative IOR `eta`, 1 past total internal reflection.
+fn fresnel_dielectric_cos(cosi: f32, eta: f32) -> f32 {
+    let c = abs(cosi);
+    var g = eta * eta - 1.0 + c * c;
+    if (g <= 0.0) { return 1.0; }
+    g = sqrt(g);
+    let a = (g - c) / (g + c);
+    let b = (c * (g + c) - 1.0) / (c * (g - c) + 1.0);
+    return 0.5 * a * a * (1.0 + b * b);
+}
+
+// `svm_node_fresnel`: the IOR is the slot's `detail`; a backface sees it
+// inverted (the kernel hands a normal already facing the ray, so the
+// side is the geometric one's: `proc_n` points at the ray on both).
+fn fresnel_slot(ior: f32) -> f32 {
+    return fresnel_dielectric_cos(dot(proc_wi, proc_n), max(ior, 1e-5));
+}
+
+// `svm_node_layer_weight`: Fresnel at `1 / (1 − blend)`, or Facing as
+// `1 − cosᵖ` with the Blend remapped to the power.
+fn layer_weight_slot(blend0: f32, facing: bool) -> f32 {
+    if (!facing) {
+        let eta = 1.0 / max(1.0 - blend0, 1e-5);
+        return fresnel_dielectric_cos(dot(proc_wi, proc_n), eta);
+    }
+    var f = abs(dot(proc_wi, proc_n));
+    if (blend0 != 0.5) {
+        let b = clamp(blend0, 0.0, 1.0 - 1e-5);
+        let p = select(0.5 / (1.0 - b), 2.0 * b, b < 0.5);
+        f = pow(f, p);
+    }
+    return 1.0 - f;
+}
 
 // ---- The slot (`Mat::color_proc` at `m + 32`, `bump_proc` at `m + 76`) ----
 
@@ -87,7 +137,7 @@ fn normalize_or_zero(v: vec3<f32>) -> vec3<f32> {
 }
 
 // The texture's coordinate for a hit: the object-space point `pobj`
-// (Generated normalizes it by the object's bounding box, `inst_at + 32`,
+// (Generated normalizes it by the mesh's bounding box, `inst_at + 32`,
 // as `ATTR_STD_GENERATED` does; Object takes it as is; UV the face's),
 // through the Mapping node's location and scale.
 fn proc_coord(w: u32, pobj: vec3<f32>, uv: vec2<f32>, inst: u32) -> vec3<f32> {
@@ -154,6 +204,14 @@ fn proc_tex(w: u32, co0: vec3<f32>) -> vec4<f32> {
             // The White Noise node has no Scale: the coordinate is hashed
             // as it arrives, W in the Offset word.
             return white_noise_texture(co0, tf(w + 20u), variant);
+        }
+        case PROC_FRESNEL: {
+            let f = fresnel_slot(detail);
+            return vec4<f32>(vec3<f32>(f), f);
+        }
+        case PROC_LAYER_FRESNEL, PROC_LAYER_FACING: {
+            let f = layer_weight_slot(detail, kind == PROC_LAYER_FACING);
+            return vec4<f32>(vec3<f32>(f), f);
         }
         case PROC_GABOR_VALUE, PROC_GABOR_PHASE, PROC_GABOR_INTENSITY: {
             // Frequency, Anisotropy and Orientation 2D ride in the Detail,
@@ -235,13 +293,18 @@ fn mix_weight(m: u32, pobj: vec3<f32>, uv: vec2<f32>, inst: u32) -> f32 {
     return mat_mix(m);
 }
 
-// The base colour a material's first slot gives a hit, or `base` as it is.
+// The base colour a material's slots give a hit, or `base` as it is: the
+// first slot's texture, and over it — through the Mix node's own blend
+// mode and factor (`mix.wgsl`'s `ramp_blend`) — the second slot's, when
+// the Base Color is a Mix of two textures.
 fn proc_base(m: u32, base: vec3<f32>, pobj: vec3<f32>, uv: vec2<f32>, inst: u32) -> vec3<f32> {
     let w = m + 32u;
-    if (proc_kind(w) != PROC_NONE && (data[w + 3u] & PROC_BASE) != 0u) {
-        return max(proc_value(w, pobj, uv, inst).rgb, vec3<f32>(0.0));
-    }
-    return base;
+    if (proc_kind(w) == PROC_NONE || (data[w + 3u] & PROC_BASE) == 0u) { return base; }
+    let first = max(proc_value(w, pobj, uv, inst).rgb, vec3<f32>(0.0));
+    let w2 = m + 120u;
+    if (proc_kind(w2) == PROC_NONE) { return first; }
+    let second = max(proc_value(w2, pobj, uv, inst).rgb, vec3<f32>(0.0));
+    return max(ramp_blend(data[w2 + 3u], tf(w2 + 15u), first, second), vec3<f32>(0.0));
 }
 
 // The normal a material's bump slot gives a hit, or `n` as it is.

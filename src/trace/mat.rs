@@ -4,8 +4,8 @@ use super::kernel::Tri;
 pub use super::proc::Proc;
 use bytemuck::{Pod, Zeroable};
 
-/// Surface inputs shared by many faces (120 words on the GPU: 32 and the
-/// two 44-word procedural slots).
+/// Surface inputs shared by many faces (164 words on the GPU: 32 and the
+/// three 44-word procedural slots).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct Mat {
@@ -37,9 +37,12 @@ pub struct Mat {
     pub second: u32,
     pub mix: f32,
     /// The procedural slots: the first drives the base colour or the mix
-    /// weight, the second the normal through a Bump node.
+    /// weight, the second the normal through a Bump node, the third the
+    /// other colour of a Base Color Mix node — blended over the first by
+    /// its own `target` (the mode) and `strength` (the factor).
     pub color_proc: Proc,
     pub bump_proc: Proc,
+    pub color_proc2: Proc,
 }
 
 /// `Mat::second` of a material with one lobe.
@@ -54,10 +57,10 @@ impl Mat {
             sheen: t.sheen, sheen_rough: t.sheen_rough, sheen_tint: t.sheen_tint,
             coat: t.coat, coat_rough: t.coat_rough, aniso: t.aniso, aniso_rot: t.aniso_rot,
             second: t.second, mix: t.mix,
-            color_proc: t.color_proc, bump_proc: t.bump_proc,
+            color_proc: t.color_proc, bump_proc: t.bump_proc, color_proc2: t.color_proc2,
         }
     }
-    pub(super) fn key(&self) -> [u32; 120] {
+    pub(super) fn key(&self) -> [u32; 164] {
         bytemuck::cast(*self)
     }
     pub(super) fn power(&self) -> f32 {

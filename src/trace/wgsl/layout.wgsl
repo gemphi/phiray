@@ -20,7 +20,10 @@ struct Tri {
     // A second lobe: another material's id (NO_MAT = none) and its weight.
     second: u32, mix: f32,
 }
-struct Hit { t: f32, tri: u32, u: f32, v: f32 }
+// A hit: the face, where on it, and the instance the top tree reached it
+// through (`trace_blas`) — a face names no instance of its own, since a
+// mesh is shown by any number of them (roadmap §4.4, Step 1).
+struct Hit { t: f32, tri: u32, u: f32, v: f32, inst: u32 }
 
 const PI: f32 = 3.14159265;
 const LEAF: u32 = 0x80000000u;
@@ -28,8 +31,9 @@ const LEAF: u32 = 0x80000000u;
 const INST: u32 = 0x40000000u;
 // Words per instance record (`Instance::words`).
 const INST_WORDS: u32 = 40u;
-// Words per material record (`Mat`).
-const MAT_WORDS: u32 = 120u;
+// Words per material record (`Mat`): 32 of its own and three 44-word
+// procedural slots (`procedural.wgsl`).
+const MAT_WORDS: u32 = 164u;
 const NO_MAT: u32 = 0xffffffffu;
 const NO_TEX: u32 = 0xffffffffu;
 const INF: f32 = 3.0e38;
@@ -41,23 +45,27 @@ fn atlas(i: u32) -> u32 { return data[p.split.w + i]; }
 
 fn tf(i: u32) -> f32 { return bitcast<f32>(data[i]); }
 
-// First word of face `f`'s material (the low half of its fourth word; the
-// high half names its instance).
-fn mat_at(f: u32) -> u32 { return mat_word(face(f).w & 0xffffu); }
-// First word of material `id`.
-fn mat_word(id: u32) -> u32 { return 1u + 2u * data[0] + MAT_WORDS * id; }
+// First word of face `f`'s material (its fourth word, whole).
+fn mat_at(f: u32) -> u32 { return mat_word(face(f).w); }
+// First word of material `id`: past the light table — the count, each
+// emitter's face, each emitter's instance, each emitter's cdf word.
+fn mat_word(id: u32) -> u32 { return 1u + 3u * data[0] + MAT_WORDS * id; }
 // A material's second lobe (`Mat::second`, `NO_MAT` for none) and its weight.
 fn mat_second(m: u32) -> u32 { return data[m + 30u]; }
 fn mat_mix(m: u32) -> f32 { return tf(m + 31u); }
 
 // Instance `i`'s record: world rows 0..12, inverse rows 12..24, 24 the root
 // of its tree, 25..27 its faces, 27 its flags: bit 0 set when it sits at
-// the identity, bit 1 when it casts no shadow; 28..31 its colour and hash,
-// 32..38 its bounding box (`procedural.wgsl`).
+// the identity, bit 1 when it casts no shadow, bit 2 when it mirrors
+// (`world_ng`); 28..31 its colour and hash, 32..38 its bounding box
+// (`procedural.wgsl`), 38 the mesh it places.
 fn inst_at(i: u32) -> u32 { return p.insts.x + i * INST_WORDS; }
 fn inst_row(w: u32) -> vec4<f32> { return vec4<f32>(tf(w), tf(w + 1u), tf(w + 2u), tf(w + 3u)); }
 // Top-tree slot `s` → instance id.
 fn inst_order(s: u32) -> u32 { return data[p.insts.x + p.insts.y * INST_WORDS + s]; }
+// Draw slot `k` → instance id: the instances grouped by mesh, what the
+// raster prepass's instanced draws index (`Trees::draw_order`).
+fn draw_inst(k: u32) -> u32 { return data[p.insts.x + p.insts.y * (INST_WORDS + 1u) + k]; }
 
 // A normal under the inverse-transpose of an instance's 3 × 3 (`i0..i2`
 // its inverse's rows), unit again; a zero (flat) normal stays zero.
@@ -77,14 +85,33 @@ fn unoct(e: vec2<f32>) -> vec3<f32> {
     return normalize(n);
 }
 
-// Assemble face `f` as a full triangle record, placed in the world by its
-// instance (its vertices are kept in the object's space), with its own
-// material.
-fn tri_at(f: u32) -> Tri { return tri_with(f, mat_at(f)); }
+// The hit face's normal in the world (`t` is it as `tri_with` placed it),
+// on the side its winding faces — the side its corner normals face. An
+// instance that mirrors (word 27, bit 2: a scale of −1, as Blender's
+// mirrored halves and twins have) turns every face's winding over when it
+// places it, while `place_n` keeps the normals pointing out, so the cross
+// product is turned back, as Cycles turns `Ng` for a negatively scaled
+// object whose transform it applied (`object_negative_scale_applied`).
+// Without it such a surface read as its back: shaded from inside in
+// Rendered, dark in Solid, and culled away under Backface Culling.
+fn world_ng(h: Hit, t: Tri) -> vec3<f32> {
+    let ng = normalize(cross(t.b - t.a, t.c - t.a));
+    let w = inst_at(h.inst);
+    return select(ng, -ng, (data[w + 27u] & 4u) != 0u);
+}
 
-// Face `f` with the material whose first word is `m` — its own, or the
-// second lobe of its own.
-fn tri_with(f: u32, m: u32) -> Tri {
+// Assemble the hit face as a full triangle record, placed in the world by
+// the instance the hit came through (its vertices are kept in the mesh's
+// space), with its own material.
+fn tri_at(h: Hit) -> Tri { return tri_with(h, mat_at(h.tri)); }
+
+// The hit face with the material whose first word is `m` — its own, or
+// the second lobe of its own.
+fn tri_with(h: Hit, m: u32) -> Tri { return tri_of(h.tri, h.inst, m); }
+
+// Face `f` under instance `i` with material `m` (an emitter, `glow_query`,
+// comes this way: the light table names the pair).
+fn tri_of(f: u32, i: u32, m: u32) -> Tri {
     let v = face(f);
     let x = vert(v.x);
     let y = vert(v.y);
@@ -98,7 +125,7 @@ fn tri_with(f: u32, m: u32) -> Tri {
     var na = unoct(a0.xy);
     var nb = unoct(a1.xy);
     var nc = unoct(a2.xy);
-    let w = inst_at(v.w >> 16u);
+    let w = inst_at(i);
     if ((data[w + 27u] & 1u) == 0u) {
         let r0 = inst_row(w);
         let r1 = inst_row(w + 4u);

@@ -165,7 +165,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         if (bounce == 0u) {
             first_t = h.t;
-            outline_store(i, (face(h.tri).w >> 16u) + 1u);
+            outline_store(i, h.inst + 1u);
         }
         // A Mix Shader's two closures: one of them per hit, by the weight
         // (`svm_node_mix_closure` weights the closures and the sampler picks
@@ -174,18 +174,23 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // The face's own material first: its geometry, the point in the
         // object's space and the UV, which a procedural mix weight reads.
         let own = mat_at(h.tri);
-        let geo = tri_with(h.tri, own);
+        let geo = tri_with(h, own);
         let w = 1.0 - h.u - h.v;
         let bary = vec3<f32>(w, h.u, h.v);
         let uv = vec2<f32>(dot(geo.us, bary), dot(geo.vs, bary));
         let hit = o + d * h.t;
-        let inst = inst_at(face(h.tri).w >> 16u);
+        let inst = inst_at(h.inst);
         let pobj = object_point(inst, hit);
+        // A Fresnel or Layer Weight on the mix reads the smooth normal
+        // facing the ray (`procedural.wgsl`'s `proc_n`, `proc_wi`).
+        let n_own = geo.na * w + geo.nb * h.u + geo.nc * h.v;
+        proc_wi = -d;
+        proc_n = select(-d, normalize(n_own) * select(-1.0, 1.0, dot(n_own, d) < 0.0), dot(n_own, n_own) > 1e-12);
         var m = own;
         let other = mat_second(m);
         if (other != NO_MAT && rnd(&seed) < mix_weight(m, pobj, uv, inst)) { m = mat_word(other); }
-        let t = tri_with(h.tri, m);
-        let ng0 = normalize(cross(t.b - t.a, t.c - t.a));
+        let t = tri_with(h, m);
+        let ng0 = world_ng(h, t);
         let front = dot(ng0, d) < 0.0;
         let ng = select(-ng0, ng0, front);
         var n = t.na * w + t.nb * h.u + t.nc * h.v;
@@ -193,6 +198,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (t.nmap != NO_TEX) { n = mapped_normal(t, n, bary); }
         n = proc_normal(m, n, pobj, uv, inst, pix * h.t);
         if (dot(n, -d) < 0.0) { n = ng; }
+        proc_n = n;
         let off = ng * (p.eps + h.t * 1e-5);
         let pos = hit + off;
         var base = proc_base(m, max(t.color.rgb, vec3<f32>(0.0)), pobj, uv, inst);

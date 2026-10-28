@@ -57,9 +57,10 @@ pub struct Tri {
     /// in the scene and the weight it takes; `NO_MAT`, 0 for one lobe.
     pub second: u32,
     pub mix: f32,
-    /// Procedural textures (`Mat::color_proc`, `bump_proc`).
+    /// Procedural textures (`Mat::color_proc`, `bump_proc`, `color_proc2`).
     pub color_proc: super::mat::Proc,
     pub bump_proc: super::mat::Proc,
+    pub color_proc2: super::mat::Proc,
 }
 
 /// `Tri::tex` value for untextured triangles.
@@ -145,6 +146,13 @@ impl Tri {
 
     /// A procedural texture on the base colour or the mix weight
     /// (`Proc::target`), and one on the normal through a Bump node.
+    /// The other colour of a Base Color Mix node, blended over the first
+    /// colour slot by the mode and factor it carries ([`Proc::mixed_over`]).
+    pub fn with_base_mix(mut self, second: Option<super::mat::Proc>) -> Self {
+        self.color_proc2 = second.unwrap_or_default();
+        self
+    }
+
     pub fn with_procs(mut self, color: Option<super::mat::Proc>, bump: Option<super::mat::Proc>) -> Self {
         self.color_proc = color.unwrap_or_default();
         self.bump_proc = bump.unwrap_or_default();

@@ -156,7 +156,12 @@ fn split_buffers_render_the_same() {
     };
     let render = |limit: u64, chunks: usize| {
         let scene = Scene::from_tris(&tris, &Atlas::default());
-        let mut tr = Tracer::with_chunks(&gpu, scene, limit, chunks).expect("fits in the chunks");
+        // The limits below are tuned to the byte for this scene, so a
+        // refusal must say which array outgrew which binding rather than
+        // leaving the next reader to work it out (`Tracer::why_not`).
+        let why = Tracer::why_not(&scene, limit, chunks);
+        let mut tr = Tracer::with_chunks(&gpu, scene, limit, chunks)
+            .unwrap_or_else(|| panic!("{limit} bytes over {chunks} chunks: {}", why.unwrap_or_else(|| "refused without a reason".into())));
         assert_eq!(tr.chunks(), chunks);
         if limit == 1148 {
             assert_eq!(tr.split()[1..3], [50, 35], "the faces whole, the vertices split 35 to a binding");
@@ -179,11 +184,12 @@ fn split_buffers_render_the_same() {
     // … while four bindings (when the device has them) still fit, down to a quarter.
     if Tracer::chunks_for(&gpu) == 4 {
         assert_eq!(whole, render(1 << 20, 4));
-        // 1132 bytes: the data table — the two materials (120 words each,
+        // 1136 bytes: the data table — the two materials (120 words each,
         // 112 before the Math node's four words a slot, batch 160), the
         // atlas's and the table's own header words and the one instance's
-        // record (41 words) — is the tightest binding.
-        assert_eq!(whole, render(1132, 4));
-        assert!(refused(1128, 4), "the data table does not fit");
+        // 42 (`INSTANCE_WORDS` + 2: the record, its top-tree slot and its
+        // draw slot, `Trees::inst_words`) — is the tightest binding.
+        assert_eq!(whole, render(1136, 4));
+        assert!(refused(1132, 4), "the data table does not fit");
     }
 }

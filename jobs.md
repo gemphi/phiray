@@ -18,6 +18,8 @@
 
 ## Done
 
+- [x] **A third material slot: the other colour of a Base Color Mix** (`Mat::color_proc2`, `MAT_WORDS` 120 → 164; `mix.wgsl`): two procedural textures on one Base Color, blended per pixel by Blender's `ramp_blend` — the slot carries the node's mode where a first slot carries its target and the Factor where a bump slot carries its Strength, so the record grew by one slot and no more
+- [x] **Fresnel and Layer Weight as procedural slots** (`procedural.wgsl`'s `PROC_FRESNEL`, `PROC_LAYER_FRESNEL`, `PROC_LAYER_FACING`; `trace/fresnel.rs` the CPU twin): a slot whose value is the hit's angle to the ray rather than a texture — Cycles' `svm_node_fresnel` and `svm_node_layer_weight` over `fresnel_dielectric_cos`. `shade.wgsl` and `preview.wgsl` set `proc_n` / `proc_wi` per hit before any slot is read, so a Mix Shader keyed on either shades by pixel instead of by one folded number. The baker's stand-in is the same function's hemispherical mean (`fresnel_dielectric_Fss`, `1 − 2/(p + 2)`), and `trace/fresnel.rs`'s test holds the two together by quadrature; `tests/procedural.rs` renders a wide-angle wall and finds the grazing corners taking the second closure
 - [x] Crate created, workspace member, entry `Ray`
 - [x] `Mode` ↔ Blender shading names
 - [x] `Kernel` trait + `Dispatch` sizing (tested to 20 M items)

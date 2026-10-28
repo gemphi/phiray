@@ -3,9 +3,11 @@
 
 pub mod blue_noise;
 pub mod hash;
+pub mod fresnel;
 pub mod srgb;
 pub mod ibl;
 pub mod instance;
+pub mod mesh;
 pub mod outline;
 pub mod proc;
 mod kernel;
@@ -39,6 +41,7 @@ enum BTail {
 pub use shader::{Adapt, AdaptClear, AdaptDilate, AdaptGather, Edge, Fx, Preview, Preview4, Show, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
 pub use outline::Outline;
 pub use instance::Instance;
+pub use mesh::Mesh;
 pub use mat::Mat;
 pub use proc::{PROC_NORMALIZE, Proc};
 pub use srgb::Srgb;
@@ -55,7 +58,7 @@ pub struct Tracer {
     faces: Vec<GpuArray<[u32; 4]>>,
     verts: Vec<GpuArray<[f32; 8]>>,
     /// `[table…, atlas…, instances…]` (`Scene::table`, `Atlas::words`,
-    /// `Trees::inst_words`).
+    /// `Trees::inst_words`: each record, the top-tree order, the draw order).
     data: GpuArray<u32>,
     /// `[packed pixel × n, accumulated rgb × n]`.
     px: Option<GpuArray<u32>>,
@@ -80,8 +83,8 @@ pub struct Tracer {
     /// the samples, not on its own.
     reshow: bool,
     raster: bool,
-    /// Faces in the scene (the prepass draws three vertices each).
-    n_faces: u32,
+    /// The prepass's draws: one instanced draw a mesh (`Trees::draws`).
+    draws: Vec<[u32; 4]>,
     /// The scene's world bounds (the prepass's orthographic depth reach).
     bounds: Aabb,
     /// Items per binding (nodes, faces, vertices) and the atlas offset.
@@ -235,7 +238,7 @@ impl Tracer {
     /// builder itself lays out below.
     fn data_words(scene: &Scene) -> u64 {
         let colors = if scene.colors.is_empty() { 0 } else { scene.pos.len() as u64 };
-        scene.table().len() as u64 + scene.atlas.words().len() as u64 + scene.insts.len() as u64 * (instance::INSTANCE_WORDS as u64 + 1) + colors
+        scene.table().len() as u64 + scene.atlas.words().len() as u64 + scene.insts.len() as u64 * (instance::INSTANCE_WORDS as u64 + 2) + colors
     }
 
     pub fn with_chunks(gpu: &Gpu, mut scene: Scene, limit: u64, chunks: usize) -> Option<Self> {
@@ -256,7 +259,7 @@ impl Tracer {
         let (glow, atlas_at) = (data[0], data.len() as u32);
         data.extend(scene.atlas.words());
         let insts_at = data.len() as u32;
-        data.extend(trees.inst_words(&scene.insts));
+        data.extend(trees.inst_words(&scene.insts, &scene.meshes));
         // The vertices' colour attribute, when any object has one (`Scene::paint`).
         let colors_at = if scene.colors.is_empty() { 0 } else { data.len() as u32 };
         if colors_at != 0 {
@@ -267,14 +270,15 @@ impl Tracer {
             return None;
         }
         let verts: Vec<[f32; 8]> = scene.pos.iter().zip(&scene.attr).map(|(p, a)| [p[0], p[1], p[2], p[3], a[0], a[1], a[2], a[3]]).collect();
-        let (nodes, n_at) = GpuArray::split(gpu, &trees.nodes(&scene.insts), limit, chunks)?;
+        let (nodes, n_at) = GpuArray::split(gpu, &trees.nodes(&scene.meshes), limit, chunks)?;
         let (faces, f_at) = GpuArray::split(gpu, &scene.faces, limit, chunks)?;
         let (verts, v_at) = GpuArray::split(gpu, &verts, limit, chunks)?;
-        let n_faces = scene.faces.len() as u32;
+        let draws = trees.draws.clone();
         let pose = pose::Pose {
             pos: std::mem::take(&mut scene.pos),
             faces: std::mem::take(&mut scene.faces),
             mats: std::mem::take(&mut scene.mats),
+            meshes: std::mem::take(&mut scene.meshes),
             insts: std::mem::take(&mut scene.insts),
             order,
             trees,
@@ -298,7 +302,7 @@ impl Tracer {
             // software adapter traces them, where walking the tree is the
             // cheaper of the two (`visible.rs`).
             raster: !gpu.adapter.is_software(),
-            n_faces,
+            draws,
             bounds,
             split: [n_at, f_at, v_at, atlas_at],
             insts: [insts_at, pose.insts.len() as u32, colors_at, 0],
@@ -629,7 +633,7 @@ impl Tracer {
             }
         }
         if let Some(vis) = &self.vis {
-            vis.draw(gpu, &cam, self.n_faces);
+            vis.draw(gpu, &cam, &self.draws);
         }
         if slices == 1 {
             self.pass.run(gpu);

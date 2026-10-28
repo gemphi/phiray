@@ -327,6 +327,16 @@ fn tiles_laid_together_are_the_whole_frame() {
     for (mode, cam) in [(Mode::Solid, Camera { fx: [1.0, 0.5, 0.7, 1.0], ..camera() }), (Mode::Wire, wire_camera())] {
         let mut whole = Tracer::new(&gpu, &wall(), &Atlas::default()).expect("scene");
         whole.set_mode(mode);
+        // Tiles trace their primary hits (`Tracer::rasterizes` draws the
+        // prepass only for a whole frame), so the frame they are laid
+        // against traces too: this is about the seams and the gather, not
+        // about the prepass. The prepass is held to the traced image by
+        // `raster.rs`'s `the_rasterized_frame_is_the_traced_frame`, within
+        // a step — it carries the instance in the word the distance used
+        // to have (`raster.wgsl`) and works the distance out again, so the
+        // two paths round a wire's edge coverage a least significant bit
+        // apart on a few dozen of this frame's 16,384 bytes.
+        whole.set_raster(false);
         let full = settled(&mut whole, &gpu, cam, W, H);
         let mut tiled = Vec::new();
         let row = (W * 4) as usize;
@@ -338,7 +348,19 @@ fn tiles_laid_together_are_the_whole_frame() {
             tiled.extend_from_slice(&px[pad_top as usize * row..px.len() - pad_bottom as usize * row]);
         }
         assert_eq!(tiled.len(), full.len());
-        assert_eq!(tiled, full, "{mode:?}: the tiles differ from the frame drawn whole");
+        // Say by how far when they differ: a byte or two apart is drift,
+        // a wholesale difference is a seam the gather did not clamp.
+        let off = tiled.iter().zip(&full).filter(|(a, b)| a != b).count();
+        let worst = tiled.iter().zip(&full).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+        assert_eq!(tiled, full, "{mode:?}: the tiles differ from the frame drawn whole ({off} of {} bytes, worst {worst})", full.len());
+        // And the prepass draws that same frame to within a step, over the
+        // instanced draws one mesh at a time (`Trees::draws`).
+        let mut drawn = Tracer::new(&gpu, &wall(), &Atlas::default()).expect("scene");
+        drawn.set_mode(mode);
+        let shown = settled(&mut drawn, &gpu, cam, W, H);
+        let apart = shown.iter().zip(&full).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+        assert!(drawn.raster() || gpu.adapter.is_software(), "{mode:?}: hardware rasterizes the prepass");
+        assert!(apart <= 1, "{mode:?}: the rasterized frame is {apart} off the traced one, not a rounding step");
     }
 }
 

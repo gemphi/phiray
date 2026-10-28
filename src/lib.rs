@@ -15,8 +15,9 @@ pub use bvh::{Aabb, Bvh, GpuBvh, Half, Node};
 pub use gpu::{Gpu, GpuAdapter, GpuAdapters, GpuArray, Pass, PatienceFor};
 pub use kernel::{BLOCK, Bind, Dispatch, Kernel};
 pub use mode::Mode;
-pub use trace::{AREA_DISK, AREA_ELLIPSE, AREA_RECT, AREA_SQUARE, Atlas, Camera, Instance, LIGHTS, Lamps, Light, Mat, NO_MAT, NO_TEX, PROC_NORMALIZE, PixelFilter, Proc, Scene, Srgb, Tracer, Tri, View, Look};
+pub use trace::{AREA_DISK, AREA_ELLIPSE, AREA_RECT, AREA_SQUARE, Atlas, Camera, Instance, LIGHTS, Lamps, Light, Mat, Mesh, NO_MAT, NO_TEX, PROC_NORMALIZE, PixelFilter, Proc, Scene, Srgb, Tracer, Tri, View, Look};
 pub use trace::proc;
+pub use trace::fresnel;
 
 /// Entry point.
 pub struct Ray;

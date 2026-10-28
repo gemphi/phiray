@@ -409,18 +409,24 @@ fn lamp_power(li: Light) -> f32 {
 
 
 // Probability that `glow_query` picks face `f` (0 when it does not glow).
-fn lamp_chance(f: u32) -> f32 {
+// The share of the light table a hit holds: its (face, instance) pair,
+// found among the emitters sorted by face then instance (`lamps.rs`), 0
+// when it is not one. An emissive mesh shown by many instances is one
+// emitter an instance, so the instance tells them apart.
+fn lamp_chance(h: Hit) -> f32 {
     let count = data[0];
     if (count == 0u) { return 0.0; }
     var lo = 0u;
     var hi = count - 1u;
     while (lo < hi) {
         let mid = (lo + hi) / 2u;
-        if (data[1u + mid] < f) { lo = mid + 1u; } else { hi = mid; }
+        let f = data[1u + mid];
+        let i = data[1u + count + mid];
+        if (f < h.tri || (f == h.tri && i < h.inst)) { lo = mid + 1u; } else { hi = mid; }
     }
-    if (data[1u + lo] != f) { return 0.0; }
-    let prev = select(0.0, tf(count + lo), lo > 0u);
-    return tf(1u + count + lo) - prev;
+    if (data[1u + lo] != h.tri || data[1u + count + lo] != h.inst) { return 0.0; }
+    let prev = select(0.0, tf(2u * count + lo), lo > 0u);
+    return tf(1u + 2u * count + lo) - prev;
 }
 
 // Next-event estimation: one emissive triangle (by power), one point on it.
@@ -433,11 +439,12 @@ fn glow_query(s: Surf, seed: ptr<function, u32>) -> Shadowed {
     var hi = count - 1u;
     while (lo < hi) {
         let mid = (lo + hi) / 2u;
-        if (tf(1u + count + mid) < u) { lo = mid + 1u; } else { hi = mid; }
+        if (tf(1u + 2u * count + mid) < u) { lo = mid + 1u; } else { hi = mid; }
     }
-    let prev = select(0.0, tf(count + lo), lo > 0u);
-    let chance = max(tf(1u + count + lo) - prev, 1e-8);
-    let t = tri_at(data[1u + lo]);
+    let prev = select(0.0, tf(2u * count + lo), lo > 0u);
+    let chance = max(tf(1u + 2u * count + lo) - prev, 1e-8);
+    let f = data[1u + lo];
+    let t = tri_of(f, data[1u + count + lo], mat_at(f));
     var a = rnd(seed);
     var b = rnd(seed);
     if (a + b > 1.0) { a = 1.0 - a; b = 1.0 - b; }
@@ -556,7 +563,7 @@ fn cosine_dir(n: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32> {
 // `glow_query`, which samples the same emitters directly (power heuristic).
 fn glow_mis(t: Tri, h: Hit, from_n: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     let e = emit_at(t, vec3<f32>(1.0 - h.u - h.v, h.u, h.v));
-    let chance = lamp_chance(h.tri);
+    let chance = lamp_chance(h);
     if (chance <= 0.0) { return e; }
     let cr = cross(t.b - t.a, t.c - t.a);
     let pl = chance * h.t * h.t / max(0.5 * length(cr) * abs(dot(normalize(cr), dir)), 1e-8);
@@ -691,7 +698,7 @@ fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>, bounce: bool
             break;
         }
         if (!bounce) { break; }
-        let t = tri_at(h.tri);
+        let t = tri_at(h);
         let ng0 = normalize(cross(t.b - t.a, t.c - t.a));
         let ng = select(-ng0, ng0, dot(ng0, dir) < 0.0);
         let hit = org + dir * h.t + ng * (p.eps + h.t * 1e-5);
@@ -772,7 +779,7 @@ fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>, bounce: bool
 // `min_pdf` is the density the reflection was sampled with, for Filter
 // Glossy: a sharp mirror's is high and blurs nothing, a rough one's low.
 fn bounce_light(h: Hit, org: vec3<f32>, d: vec3<f32>, min_pdf: f32, seed: ptr<function, u32>) -> vec3<f32> {
-    let t = tri_at(h.tri);
+    let t = tri_at(h);
     let ng0 = normalize(cross(t.b - t.a, t.c - t.a));
     let ng = select(-ng0, ng0, dot(ng0, d) < 0.0);
     let pos = org + d * h.t + ng * (p.eps + h.t * 1e-5);
