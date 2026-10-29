@@ -921,6 +921,12 @@ four tilted supports, which for a rim or a circular face are not the
 points that hold it. Budget: 4 to 6 days, and it is the prerequisite
 for M3 (the GPU path would inherit the same manifold).
 
+**Also not wired yet:** an active body given a Mesh shape is simulated
+as its convex hull, and `World::hull_fallback` lists those objects so an
+open can say so - as §2.2 says it should, the way `skipped_modifiers`
+reports a dropped modifier. The list is filled (`sim/blend.rs`) and
+nothing reads it, so today the substitution is silent.
+
 **Five bugs fixed in the solver while getting here**, each with the test
 that catches it:
 

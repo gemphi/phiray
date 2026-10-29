@@ -2,9 +2,12 @@
 
 | State | Open | Done |
 |---|---|---|
-| Material Preview + Rendered live (GPU ray tracing) | 8 | 30 |
+| Material Preview + Rendered live (GPU ray tracing) | 10 | 31 |
 
 ## Todo
+
+- [ ] The GJK/EPA manifold: a capsule, cylinder, cone and hull collide and roughly settle but creep 15-18 mm over three seconds (`tests/sim.rs`'s `curved_shapes_rest_only_roughly`, ignored with its numbers). The sphere and box paths (closed form, SAT) are exact under the same solver, so it is what the narrowphase hands over and not the solver over it. Snapping the contact normal to a box's own face plane was tried and measured as neutral, so the normal is not what is off; the point set `epa::manifold` picks - the deepest witness plus four supports tilted 0.15 off the normal - is the next suspect. Blocks the GPU path (M3), which would inherit the same manifold
+- [ ] Report an active Mesh body simulated as its convex hull: `World::hull_fallback` is filled (`sim/blend.rs`) and nothing reads it yet, so an open says nothing about it - it should surface the way `skipped_modifiers` reports a dropped modifier
 
 - [ ] Scenes beyond twice the per-binding limit: stream geometry per object (Cycles-style device memory management)
 
@@ -17,6 +20,8 @@
 - [ ] Keep skinned vertices on the GPU for Preview/Rendered (no readback once those modes draw)
 
 ## Done
+
+- [x] **Rigid bodies on the CPU** (`src/sim/`, 16 files + `tests/sim.rs`; milestone M1 of `docs/ROADMAP.md` §2, whose "M1 status" says what works and what does not): XPBD substeps with positional friction, dynamic friction and restitution on the velocities, a broadphase over this crate's own `Bvh`, a narrowphase of closed forms, SAT with clipping and GJK/EPA plus a passive mesh's triangle tree, sleeping, `World::from_blend` over what phiphx reads of a file's Rigid Body World, and `World::poses` for `Tracer::reinstance`. Every array is the `Pod` twin a GPU kernel will take (M3). Checked against closed forms: free fall, a bounce to e² of its height, a box held below its friction angle and sliding above it, ten boxes standing a thousand frames, a sphere and a box resting on their exact height, Blender's own settings driving a crate onto a mesh floor, determinism, and energy over ten seconds of bouncing. Five solver bugs were found by those tests and fixed on the way: the friction cone compared a point's whole tangential ask against its share of the manifold's normal impulse (a box slid 3.3 m down a slope inside its friction angle); friction was skipped whenever the normal pass had nothing left to do; penetration recovery became velocity (3 cm at a 600 Hz substep is 18 m/s, which launched a capsule to z = 22) and is now split off the derived velocity and rate limited by `World::max_recover`; the restitution pass cancelled the separation a bounce had just made; and Blender's `solver_iterations` was divided by the substep count where Bullet runs that many in each internal step
 
 - [x] **A third material slot: the other colour of a Base Color Mix** (`Mat::color_proc2`, `MAT_WORDS` 120 → 164; `mix.wgsl`): two procedural textures on one Base Color, blended per pixel by Blender's `ramp_blend` — the slot carries the node's mode where a first slot carries its target and the Factor where a bump slot carries its Strength, so the record grew by one slot and no more
 - [x] **Fresnel and Layer Weight as procedural slots** (`procedural.wgsl`'s `PROC_FRESNEL`, `PROC_LAYER_FRESNEL`, `PROC_LAYER_FACING`; `trace/fresnel.rs` the CPU twin): a slot whose value is the hit's angle to the ray rather than a texture — Cycles' `svm_node_fresnel` and `svm_node_layer_weight` over `fresnel_dielectric_cos`. `shade.wgsl` and `preview.wgsl` set `proc_n` / `proc_wi` per hit before any slot is read, so a Mix Shader keyed on either shades by pixel instead of by one folded number. The baker's stand-in is the same function's hemispherical mean (`fresnel_dielectric_Fss`, `1 − 2/(p + 2)`), and `trace/fresnel.rs`'s test holds the two together by quadrature; `tests/procedural.rs` renders a wide-angle wall and finds the grazing corners taking the second closure

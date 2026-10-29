@@ -16,8 +16,9 @@ src/
 ├── bvh/       Aabb, Half/Node (16-byte halves, leaf bit), Bvh (CPU LBVH), GpuBvh + Morton/Karras/Refit kernels
 ├── gpu/       Gpu (device+queue), GpuArray<T>, Pass (cache + record + replay)
 ├── trace/     Tracer, Camera, Scene (compact faces/vertices/materials), Tri + wgsl/ (Rendered mode)
-└── kernels/   Skin (linear blend skinning, CSR influences) + CPU twin
-tests/         gpu.rs (skinning), bvh.rs (build + refit), trace.rs (image) — GPU == CPU; skip without an adapter
+├── kernels/   Skin (linear blend skinning, CSR influences) + CPU twin
+└── sim/       Rigid bodies: XPBD substeps, broadphase over `bvh`, narrowphase (closed forms, SAT, GJK/EPA), Blender's Rigid Body World in (`docs/ROADMAP.md` §2)
+tests/         gpu.rs (skinning), bvh.rs (build + refit), trace.rs (image), sim.rs (bodies vs closed forms) — GPU == CPU; skip without an adapter
 reference/
 └── warp/      NVIDIA Warp subset (Apache-2.0, read-only) + ANALYSIS.md
 ```
@@ -33,3 +34,8 @@ Writing a kernel: implement `Kernel` (`NAME`, `WGSL`, `BINDS`, `Params` starting
 Used by Phiber: `phiber::v2::scene::RaySkin` implements phiphx's `Skinner` with `Skin`,
 so Armature deform of opened files runs here.
 Phiber's Rendered shading (`view3d/rendered.rs`) builds a `Tracer` per scene and paints its image.
+
+Physics (`sim/`) is the CPU half of `docs/ROADMAP.md` §2: `World::from_blend` takes what
+phiphx reads of a file's Rigid Body World and `World::poses` hands each body's matrix to
+`Tracer::reinstance`. Its arrays are the `Pod` twins the GPU kernels will take; what works
+and what does not is the ROADMAP's "M1 status".
