@@ -9,6 +9,7 @@ pub mod gpu;
 pub mod kernel;
 pub mod kernels;
 pub mod mode;
+pub mod sim;
 pub mod trace;
 
 pub use bvh::{Aabb, Bvh, GpuBvh, Half, Node};

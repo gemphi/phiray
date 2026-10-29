@@ -885,6 +885,58 @@ GPU display 5-10 d. Phases 1 and 2 (about 37-51 d) are the minimum for
 
 ---
 
+## M1 status (2026-10-29)
+
+`src/sim/` (1,704 lines over ten files) and `tests/sim.rs` are in: the
+`Pod` state arrays, one support function per convex kind, the broadphase
+over `crate::bvh::Bvh`, the narrowphase (closed forms, SAT with
+clipping, GJK/EPA, a passive mesh's triangle tree), XPBD substeps with
+positional friction, dynamic friction and restitution on the
+velocities, sleeping, `from_blend` and `poses`. CPU only; no kernels yet
+(that is M3).
+
+**Passing** (`cargo test -p phiray --test sim`, 7 of 8): free fall
+against the closed form to 1e-3 over 100 frames; a ball bouncing to
+`e²` of its height within 5%; a box held below its friction angle and
+sliding above it; ten boxes standing 1,000 frames with the top one
+inside a millimetre; a sphere and a box resting on the exact height to
+the micron with no drift; Blender's own settings driving a crate to rest
+on a mesh floor, out through `poses`; two runs bit-identical; a
+frictionless ball keeping its energy over ten seconds.
+
+**Not working: the four shapes the narrowphase answers with GJK/EPA.**
+A capsule, cylinder, cone and convex hull collide and roughly settle,
+but they creep — 15 to 18 mm over three seconds at ten substeps and ten
+projections — and the cone and hull can sit a centimetre off their
+height. `curved_shapes_rest_only_roughly` is `#[ignore]`d with the
+measured numbers. The fault is the quality of the points and normals
+EPA hands over for a curved or flat-faced convex, not the solver over
+them: the sphere and box paths (closed form, SAT) are exact under the
+same solver, and nothing is launched or loses energy any more. Snapping
+the contact to a box's own face plane, the way `tri_pair` does for a
+mesh triangle, was tried and changed nothing measurable, so the normal
+being slightly off axis is *not* the cause; the next suspect is the
+manifold's point set — `epa::manifold` picks the deepest witness plus
+four tilted supports, which for a rim or a circular face are not the
+points that hold it. Budget: 4 to 6 days, and it is the prerequisite
+for M3 (the GPU path would inherit the same manifold).
+
+**Five bugs fixed in the solver while getting here**, each with the test
+that catches it:
+
+| Bug | What it cost |
+|---|---|
+| The friction cone compared a point's whole tangential ask against its *share* of the manifold's normal impulse | Friction almost never held: a box slid 3.3 m down a slope well inside its friction angle. No substep or iteration count helped, which is what marked it as a predicate bug rather than convergence |
+| Friction was skipped whenever the normal pass had nothing left to do | The second and later projections of a substep held nothing, though the drift was still there |
+| Penetration recovery became velocity | 3 cm at a 600 Hz substep *is* 18 m/s: the capsule was launched to z = 22 and the ball came back to four times its drop. Now split: the recovery moves the pose and is kept out of the derived velocity (Bullet's split impulse), rate-limited by `World::max_recover` |
+| The restitution pass drove *every* normal velocity to its target, every substep | Once recovery spanned several substeps it cancelled the separation the bounce had just made. It now only ever applies an impulse that separates |
+| Blender's `solver_iterations` was divided by the substep count | Bullet runs that many in *each* internal step, so the default file was left on one projection a substep, and the stack settled 2 mm instead of 0.07 mm |
+
+The test for "at rest" now reads against `g h / 2`, the speed a body
+carries when a frame ends on half a substep's kick of gravity: a sphere
+and a box sit at exactly that, so an absolute budget near it was a
+number only one substep count could meet.
+
 ## 6. Risks
 
 1. **WGSL limits.** No float atomics, no `f64`, subgroups optional. The design
