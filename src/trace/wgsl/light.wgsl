@@ -715,7 +715,10 @@ fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>, bounce: bool
         // scattered here (`closure.h` takes the transmission's weight out of
         // everything under it).
         let tw = t.trans * (1.0 - t.metal);
-        let albedo = base * (1.0 - t.metal) * (1.0 - tw) * under_layer(fd, rough, max(dot(ng, -dir), 1e-4));
+        var albedo = base * (1.0 - t.metal) * (1.0 - tw);
+        if (max(albedo.r, max(albedo.g, albedo.b)) > 0.0) {
+            albedo *= under_layer(fd, rough, max(dot(ng, -dir), 1e-4));
+        }
         acc += thr * glow_mis(t, h, nrm, dir);
         // A ray that never left the AO radius is treated as the flat world
         // would treat it, so a crevice does not go black without a world image.
@@ -786,7 +789,10 @@ fn bounce_light(h: Hit, org: vec3<f32>, d: vec3<f32>, min_pdf: f32, seed: ptr<fu
     let base = max(t.color.rgb, vec3<f32>(0.0));
     let rough = max(t.rough, glossy_floor(min_pdf));
     let fd = dielectric_f0(t.ior);
-    let under = under_layer(fd, rough, max(dot(ng, -d), 1e-4));
-    let s = plain_surf(pos, ng, -d, base * (1.0 - t.metal) * under, mix(fd, base, t.metal), rough);
+    var albedo = base * (1.0 - t.metal);
+    if (max(albedo.r, max(albedo.g, albedo.b)) > 0.0) {
+        albedo *= under_layer(fd, rough, max(dot(ng, -d), 1e-4));
+    }
+    let s = plain_surf(pos, ng, -d, albedo, mix(fd, base, t.metal), rough);
     return direct(s, seed, false, false) + s.albedo * env_at(ng) * 0.8 + emit_at(t, vec3<f32>(1.0 - h.u - h.v, h.u, h.v));
 }

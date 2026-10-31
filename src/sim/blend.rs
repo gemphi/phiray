@@ -128,6 +128,24 @@ impl World {
             let verts: Vec<V3> = o.tris.iter().flatten().map(|v| mul3(*v, s)).collect();
             let (lo, hi) = verts.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| (map3(|k| lo[k].min(v[k])), map3(|k| hi[k].max(v[k]))));
             let half = if verts.is_empty() { [0.0; 3] } else { map3(|k| 0.5 * (hi[k] - lo[k])) };
+            // Where the bounds' centre sits in the scaled object space.
+            // Blender builds a primitive centred on the object origin and
+            // assumes the origin IS the centre of mass
+            // (`rigidbody_validate_sim_shape_helper`: "Object pivot is
+            // centralized in boundbox"). An object whose origin is off to
+            // one side of its mesh would then have its box/sphere/capsule
+            // float away from the mesh. `com_local` is the offset from the
+            // origin to that centre; `pose_matrix` puts the object back so
+            // the shape sits where the mesh is, while the solver still
+            // spins the body about its centre of mass. A hull keeps its
+            // points about the origin, so its centre is already right and
+            // its `com` stays zero.
+            let centre = if verts.is_empty() { [0.0; 3] } else { map3(|k| 0.5 * (lo[k] + hi[k])) };
+            let primitive = !matches!(
+                (b.shape, kind),
+                (BlendShape::ConvexHull, _) | (BlendShape::Compound, _) | (BlendShape::Mesh, Kind::Active)
+            );
+            let com = if primitive { centre } else { [0.0; 3] };
             let radius = half[0].max(half[1]);
             let shape = match (b.shape, kind) {
                 (BlendShape::Box, _) => world.add_shape(Shape::boxed(half)),
@@ -150,13 +168,19 @@ impl World {
                 (false, BlendShape::ConvexHull) | (false, BlendShape::Mesh) | (false, BlendShape::Compound) => 0.04,
                 (false, _) => 0.0,
             };
+            // The body is tracked at its centre of mass, so its world
+            // position is the object origin plus the rotated COM offset.
+            // `pose_matrix(x, q, com, s)` undoes this to recover the
+            // object origin for the renderer.
+            let x_com = add(x, rotate(q, com));
             world.add_body(BodyDef {
                 kind,
                 shape,
                 mass: b.mass,
-                x,
+                x: x_com,
                 q,
                 scale: s,
+                com,
                 friction: b.friction,
                 restitution: b.restitution,
                 margin,
@@ -177,4 +201,42 @@ impl World {
 fn unique(verts: Vec<V3>) -> Vec<V3> {
     let mut seen = std::collections::HashSet::new();
     verts.into_iter().filter(|v| seen.insert(v.map(f32::to_bits))).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::ShapeKind;
+
+    /// A box object whose mesh sits a metre off its origin keeps its
+    /// collision box ON the mesh: the body's centre of mass is the bounds'
+    /// centre in world, and `poses()` reconstructs the object origin back
+    /// at the matrix it was given.
+    fn unit_box_shifted() -> Vec<[V3; 3]> {
+        // A 2×2×2 box centred at (1, 0, 0) in object space (origin off to
+        // one side). Two triangles are enough to carry the bounds.
+        let (lo, hi) = ([0.0, -1.0, -1.0], [2.0, 1.0, 1.0]);
+        vec![[lo, [hi[0], lo[1], lo[2]], hi], [lo, hi, [lo[0], hi[1], hi[2]]]]
+    }
+
+    #[test]
+    fn a_primitive_centres_on_its_bounds_not_its_origin() {
+        let tris = unit_box_shifted();
+        let body = BlendBody { shape: BlendShape::Box, ..BlendBody::default() };
+        // Object sitting at world origin, no rotation or scale.
+        let world_m = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        let objs = [BlendObject { body, tris: &tris, world: world_m, obj: 0 }];
+        let w = World::from_blend(&BlendWorld::default(), &objs);
+
+        // The body's COM is the bounds' centre in world: (1, 0, 0).
+        assert!(len(sub(w.bodies[0].x, [1.0, 0.0, 0.0])) < 1e-5, "COM at the bounds centre: {:?}", w.bodies[0].x);
+        // The box half-extents are the true half-size (1,1,1), not biased
+        // by the origin being off to one side.
+        assert_eq!(w.shapes[0].kind(), ShapeKind::Box);
+        assert!(len(sub(w.shapes[0].half, [1.0, 1.0, 1.0])) < 1e-5, "half: {:?}", w.shapes[0].half);
+        // `poses()` hands back the object's matrix: the origin is at (0,0,0)
+        // again (translation column), not at the COM.
+        let (_obj, m) = w.poses().next().unwrap();
+        assert!(len(sub([m[3][0], m[3][1], m[3][2]], [0.0, 0.0, 0.0])) < 1e-5, "origin round-trips: {:?}", m[3]);
+    }
 }

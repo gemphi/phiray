@@ -126,6 +126,42 @@ fn a_flat_surface_is_smooth_where_one_path_traced_sample_is_noisy() {
     assert!(noisy > smooth * 4.0, "the first path-traced sample is the noisy one: {noisy} vs {smooth}");
 }
 
+/// No ray falls between the two triangles of a quad. The card's shared
+/// diagonal runs from `q[0]` to `q[2]` — the line x = z in the plane
+/// y = 2 — and a primary ray meets it exactly where `x + y = W − 1`, so
+/// that is the row of pixels to look along. Möller–Trumbore divided by
+/// each triangle's own determinant before testing its barycentrics, which
+/// let both sides reject a ray that fell on the edge: six of these 48
+/// pixels showed the sky instead of the card. The test is watertight now
+/// (Woop, Benthin, Benthin and Wald, JCGT 2(1) 2013; `bvh.wgsl`'s
+/// `tri_t`, with its CPU twin in `src/trace/tri.rs`), so a ray on the
+/// edge hits both triangles and the nearer-wins test gives it to one.
+///
+/// A hole is read off the frame rather than guessed at: the card is
+/// uniform, so each pixel of the diagonal has to match the two beside it
+/// in the same row, which are squarely inside one triangle. The card
+/// covers the whole frame at this camera (the quad reaches ±3 where the
+/// rays reach ±0.75), so there is no silhouette to confuse it with.
+#[test]
+fn no_ray_falls_between_the_two_triangles_of_a_quad() {
+    if Ray::gpu().is_none() {
+        return;
+    }
+    let atlas = sky_atlas();
+    let (px, _) = render(Mode::Preview, camera(), &card(3.0, 2.0, None), &atlas);
+    let mut worst = (0u32, 0u32, 0.0f32);
+    for x in 1..W - 1 {
+        let y = W - 1 - x;
+        let beside = 0.5 * (luma(&px, x - 1, y) + luma(&px, x + 1, y));
+        assert!(beside > 100.0, "the sky lights the card either side of the diagonal at ({x}, {y}): {beside}");
+        let apart = (luma(&px, x, y) - beside).abs();
+        if apart > worst.2 {
+            worst = (x, y, apart);
+        }
+    }
+    assert!(worst.2 < 20.0, "the shared diagonal shows through at ({}, {}): {} luma off the card", worst.0, worst.1, worst.2);
+}
+
 #[test]
 fn a_distant_checker_reads_as_grey_through_its_mip_levels() {
     if Ray::gpu().is_none() {

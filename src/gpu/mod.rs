@@ -8,6 +8,9 @@ mod adapter;
 mod array;
 mod pass;
 mod raster;
+/// Reading a texture back without waiting on the render thread
+/// (`AsyncReadback`), beside the blocking `read_range` below.
+pub mod readback;
 /// Where the process's one device lives — a static on a desktop, a
 /// thread-local in a browser (`shared.rs` says why).
 mod shared;
@@ -16,6 +19,7 @@ pub use adapter::{GpuAdapter, GpuAdapters};
 pub use array::GpuArray;
 pub use pass::Pass;
 pub use raster::Visibility;
+pub use readback::{AsyncReadback, ReadbackBuffer, padded_bytes_per_row};
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -43,6 +47,12 @@ pub const WAIT_LIMIT: Duration = Duration::from_secs(5);
 /// So the budget is the caller's: [`Gpu::patience`] holds the current one
 /// and [`PatienceFor`] raises it for as long as a render needs.
 static PATIENCE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(5_000);
+
+/// How long, and how often, the process has sat in [`Gpu::wait`]
+/// (see [`Gpu::waited`]). Process-wide and monotonic: a caller measuring
+/// one render takes the pair before and after and subtracts.
+static WAITED_NS: AtomicU64 = AtomicU64::new(0);
+static WAITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Raise the readback budget for as long as this value lives, then put the
 /// previous one back — so a final render may wait minutes without the
@@ -233,9 +243,29 @@ impl Gpu {
         self.device.limits().max_storage_buffer_binding_size
     }
 
+    /// Nanoseconds spent in [`Gpu::wait`], and how many times — read by a
+    /// host that wants to know how much of a render was the GPU standing
+    /// idle rather than tracing (`phiber::scene::render_trace`).
+    ///
+    /// A drain is the price of cutting a sample into slices: the device is
+    /// emptied after each one so a single dispatch never meets the
+    /// platform's GPU watchdog, and so a cancel can be seen between them.
+    /// That price was never measured, so nobody knew whether 64 slices cost
+    /// 1% or 40%. Two relaxed atomics; they are not on the GPU's path.
+    pub fn waited() -> (u64, u32) {
+        (WAITED_NS.load(Ordering::Relaxed), WAITS.load(Ordering::Relaxed))
+    }
+
     /// Block until queued work is done. Never returns if the device is
     /// lost — call [`Gpu::wait_for`] from anything that must not hang.
     pub fn wait(&self) {
+        let at = web_time::Instant::now();
+        let _done = self.wait_counted();
+        WAITED_NS.fetch_add(at.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64, Ordering::Relaxed);
+        WAITS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn wait_counted(&self) {
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
     }
 

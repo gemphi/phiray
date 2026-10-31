@@ -10,6 +10,7 @@ pub mod instance;
 pub mod mesh;
 pub mod outline;
 pub mod proc;
+pub mod tri;
 mod kernel;
 mod lamps;
 mod mat;
@@ -38,7 +39,7 @@ enum BTail {
     Adapt,
 }
 
-pub use shader::{Adapt, AdaptClear, AdaptDilate, AdaptGather, Edge, Fx, Preview, Preview4, Show, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
+pub use shader::{Adapt, AdaptClear, AdaptDilate, AdaptGather, Edge, Fx, Glow, Preview, Preview4, Show, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
 pub use outline::Outline;
 pub use instance::Instance;
 pub use mesh::Mesh;
@@ -641,6 +642,20 @@ impl Tracer {
         }
         for k in 0..slices {
             self.pass.run_step(gpu, k as usize);
+            // NOTE (unresolved): this drain is `device.poll(wait_indefinitely())`
+            // and its own doc says it never returns if the device is lost.
+            // On a 0.1 MB scene a 64-sample render was measured at 1830 s of
+            // wall against 45 s of CPU — 2.5% busy, nothing written, no
+            // error — which is what an indefinite poll on a stalled device
+            // looks like.
+            //
+            // Replacing it with the bounded `Gpu::wait_for` was tried and
+            // REVERTED: `wait_for` spawns a thread per call, and per slice
+            // that is thread churn (the same render then ran at 40% CPU and
+            // still did not finish), while its budget here is the render's
+            // ten-minute `PatienceFor` — far too long to bound one dispatch.
+            // A fix needs a bounded poll that allocates nothing, and a
+            // per-dispatch budget of its own; neither exists yet.
             gpu.wait();
             if k + 1 < slices && !go() {
                 // Abandoned: the next sample starts the image over.
@@ -757,6 +772,45 @@ impl Tracer {
         for (i, step) in [1u32, 2, 4, 8, 16].into_iter().enumerate() {
             let params = DenoiseParams { step, round: i as u32, last: u32::from(step == 16), ..base };
             pass.add::<Denoise>(gpu, n, params, &[px.buffer()]);
+        }
+        pass.run(gpu);
+    }
+
+    /// Bloom / Glare over the settled frame (`Glow`, `glow.wgsl`): the
+    /// bright parts of the scene-linear image bleed into their
+    /// surroundings, as Blender's Eevee Bloom and the compositor's Fog-Glow
+    /// Glare do. Run after the samples are in and before a readback, like
+    /// [`Self::denoise`] — it rewrites the display pixels in place, so
+    /// [`Self::pixels`] and [`Self::display`] come back with the glare.
+    ///
+    /// `threshold` is the scene-linear luma a pixel must exceed to glow,
+    /// `intensity` how strongly the blurred glare is added back, and
+    /// `radius` the Gaussian step in texels (wider spreads it further).
+    /// A `threshold` at or above the brightest pixel, or `intensity` 0, is
+    /// a no-op; the caller decides from the panel whether to run it at all.
+    pub fn glow(&mut self, gpu: &Gpu, threshold: f32, intensity: f32, radius: f32) {
+        let (w, h) = self.size;
+        let n = (w as usize) * (h as usize);
+        let (Some(px), Some(cam)) = (self.px.as_ref(), self.last) else { return };
+        if n == 0 || intensity <= 0.0 {
+            return;
+        }
+        // The glare scratch: two rgb buffers a pixel (A at 0, B at 3n),
+        // ping-ponged by the separable blur. Its own binding, so the
+        // packed image buffer (`PX_WORDS`) is untouched.
+        let scratch = GpuArray::<u32>::zeroed(gpu, 2 * 3 * n);
+        let d = Dispatch::new(n as u32);
+        let mut pass = Pass::default();
+        for stage in 0u32..4 {
+            let cam = Camera {
+                n: n as u32,
+                groups_x: d.x,
+                frame: self.frame,
+                fx: [threshold, intensity, radius.max(1.0), 1.0],
+                slice: [stage, 0, 0, 0],
+                ..cam
+            };
+            pass.add::<Glow>(gpu, n as u32, cam, &[px.buffer(), scratch.buffer()]);
         }
         pass.run(gpu);
     }

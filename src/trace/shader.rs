@@ -117,6 +117,22 @@ impl Kernel for Fx {
     const BINDS: &'static [Bind] = &[Bind::Write, Bind::Read];
     type Params = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/fx.wgsl"), include_str!("wgsl/dof.wgsl"));
+    const FILES: &'static [&'static str] = &["camera.wgsl", "view.wgsl", "fx.wgsl", "dof.wgsl"];
+}
+
+/// Bloom / Glare (`glow.wgsl`): Blender's Eevee Bloom and the compositor's
+/// Fog-Glow Glare, run on the settled frame's scene-linear radiance before
+/// the view transform. Four stages over `Camera::slice.x` (threshold,
+/// blur-x, blur-y, composite), a separable Gaussian. It binds the image
+/// and a `2·3n`-word glare scratch buffer (`Tracer::glow`).
+pub struct Glow;
+
+impl Kernel for Glow {
+    const NAME: &'static str = "glow";
+    const BINDS: &'static [Bind] = &[Bind::Write, Bind::Write];
+    type Params = Camera;
+    const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/glow.wgsl"));
+    const FILES: &'static [&'static str] = &["camera.wgsl", "view.wgsl", "glow.wgsl"];
 }
 
 /// The display step alone (`show.wgsl`): the view transform and the grid
@@ -130,6 +146,7 @@ impl Kernel for Show {
     const BINDS: &'static [Bind] = &[Bind::Write];
     type Params = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/show.wgsl"));
+    const FILES: &'static [&'static str] = &["camera.wgsl", "view.wgsl", "show.wgsl"];
 }
 
 /// The selection outline (`outline.wgsl`): the id edges of the selected
@@ -216,11 +233,52 @@ macro_rules! direct_wgsl {
     };
 }
 
+const TRACE_FILES_2: &[&str] = &[
+    "camera.wgsl",
+    "layout.wgsl",
+    "binds2.wgsl",
+    "texture.wgsl",
+    "noise.wgsl",
+    "hash.wgsl",
+    "gabor.wgsl",
+    "math.wgsl",
+    "voronoi.wgsl",
+    "pattern.wgsl",
+    "mix.wgsl",
+    "procedural.wgsl",
+    "bvh.wgsl",
+    "view.wgsl",
+    "util.wgsl",
+    "light.wgsl",
+    "shade.wgsl",
+];
+
+const TRACE_FILES_4: &[&str] = &[
+    "camera.wgsl",
+    "layout.wgsl",
+    "binds4.wgsl",
+    "texture.wgsl",
+    "noise.wgsl",
+    "hash.wgsl",
+    "gabor.wgsl",
+    "math.wgsl",
+    "voronoi.wgsl",
+    "pattern.wgsl",
+    "mix.wgsl",
+    "procedural.wgsl",
+    "bvh.wgsl",
+    "view.wgsl",
+    "util.wgsl",
+    "light.wgsl",
+    "shade.wgsl",
+];
+
 impl Kernel for Trace {
     const NAME: &'static str = "trace";
     const BINDS: &'static [Bind] = &[R, R, R, R, R, R, R, Bind::Write];
     type Params = Camera;
     const WGSL: &'static str = trace_wgsl!("wgsl/binds2.wgsl");
+    const FILES: &'static [&'static str] = TRACE_FILES_2;
 }
 
 impl Kernel for Trace4 {
@@ -228,6 +286,7 @@ impl Kernel for Trace4 {
     const BINDS: &'static [Bind] = &[R, R, R, R, R, R, R, R, R, R, R, R, R, Bind::Write];
     type Params = Camera;
     const WGSL: &'static str = trace_wgsl!("wgsl/binds4.wgsl");
+    const FILES: &'static [&'static str] = TRACE_FILES_4;
 }
 
 impl Kernel for Solid {

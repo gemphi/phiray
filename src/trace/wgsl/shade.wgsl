@@ -189,7 +189,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         var m = own;
         let other = mat_second(m);
         if (other != NO_MAT && rnd(&seed) < mix_weight(m, pobj, uv, inst)) { m = mat_word(other); }
-        let t = tri_with(h, m);
+        // Geometry does not change when the face keeps its own closure.
+        // Rebuilding it here used to fetch the face and all three vertices,
+        // transform three positions and three normals, and decode three
+        // attributes a second time after `geo` had just done exactly that.
+        // Most materials have no Mix Shader (`other == NO_MAT`), so keep the
+        // assembled triangle and only rebuild when the stochastic closure
+        // choice actually selected another material record.
+        var t = geo;
+        if (m != own) { t = tri_with(h, m); }
         let ng0 = world_ng(h, t);
         let front = dot(ng0, d) < 0.0;
         let ng = select(-ng0, ng0, front);
@@ -225,9 +233,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         col += thr * emit;
         let bleed = scatter_bleed(t.sss, t.sss_radius);
         let fd = dielectric_f0(t.ior);
-        let under = under_layer(fd, max(rough, 0.04), max(dot(n, -d), 1e-4));
+        var diffuse = base * (1.0 - metal);
+        if (max(diffuse.r, max(diffuse.g, diffuse.b)) > 0.0) {
+            diffuse *= under_layer(fd, max(rough, 0.04), max(dot(n, -d), 1e-4));
+        }
         let s = Surf(
-            pos, n, -d, base * (1.0 - metal) * under, mix(fd, base, metal), max(rough, 0.04),
+            pos, n, -d, diffuse, mix(fd, base, metal), max(rough, 0.04),
             bleed, scatter_tint(t.sss_radius),
             t.sheen, t.sheen_rough, t.sheen_tint,
             t.coat, t.coat_rough,
@@ -239,11 +250,23 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // `film_clamp_light`). Indirect defaults to 10 there, and that is
         // what keeps a strong lamp seen through a glossy bounce from
         // leaving fireflies that Adaptive Sampling then never settles.
-        var c = clamp_light(direct(s, &seed, true, true) * opaque, p.limit.x);
+        var c = vec3<f32>(0.0);
+        if (opaque > 0.0) {
+            c = clamp_light(direct(s, &seed, true, true) * opaque, p.limit.x);
+        }
         var bounced = vec3<f32>(0.0);
 
-        // Ambient takes the same scattering tint, so skin stays warm in shadow.
-        bounced += mix(s.albedo, s.albedo * s.sss_tint, bleed) * indirect(pos, n, &seed, diffuse_on) * opaque;
+        // Do not launch a diffuse path for a lobe whose contribution is
+        // mathematically zero. Pure metal has no diffuse albedo; full
+        // transmission has no opaque share. The old expression evaluated
+        // `indirect` first — up to four closest-hit walks and a direct-light
+        // shadow walk at each hit — and multiplied the result by zero only
+        // afterwards. The branch changes no estimator or random stream on
+        // nonzero lobes.
+        let diffuse_weight = mix(s.albedo, s.albedo * s.sss_tint, bleed) * opaque;
+        if (max(diffuse_weight.r, max(diffuse_weight.g, diffuse_weight.b)) > 0.0) {
+            bounced += diffuse_weight * indirect(pos, n, &seed, diffuse_on);
+        }
 
         // Glossy reflection: one GGX sample the way Cycles takes it
         // (`bsdf_microfacet_sample`) — a visible microfacet normal, the view

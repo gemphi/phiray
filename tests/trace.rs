@@ -145,10 +145,14 @@ fn split_buffers_render_the_same() {
     let Some(gpu) = Ray::gpu() else { return };
     // A 5 × 5 grid seen from above: 50 faces, 36 shared vertices.
     let mut tris = Vec::new();
+    // One material keeps the table under the artificial binding limit;
+    // the purpose here is split geometry addressing, not checkerboard
+    // material selection. `Mat` grew from 120 to 164 words when the third
+    // procedural slot was added, and two materials made the old 1148-byte
+    // fixture reject the unchunked table before it reached this assertion.
     for (i, j) in (0..5).flat_map(|i| (0..5).map(move |j| (i as f32, j as f32))) {
         let q = [[i, j, 0.0], [i + 1.0, j, 0.0], [i + 1.0, j + 1.0, 0.0], [i, j + 1.0, 0.0]];
-        let c = if ((i + j) as u32).is_multiple_of(2) { [0.8, 0.3, 0.2, 1.0] } else { [0.2, 0.3, 0.8, 1.0] };
-        tris.extend(quad(q, [0.0, 0.0, 1.0], c));
+        tris.extend(quad(q, [0.0, 0.0, 1.0], [0.8, 0.3, 0.2, 1.0]));
     }
     let cam = Camera {
         right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], back: [0.0, 0.0, 1.0], pivot: [2.5, 2.5, 0.0],
@@ -184,12 +188,13 @@ fn split_buffers_render_the_same() {
     // … while four bindings (when the device has them) still fit, down to a quarter.
     if Tracer::chunks_for(&gpu) == 4 {
         assert_eq!(whole, render(1 << 20, 4));
-        // 1136 bytes: the data table — the two materials (120 words each,
-        // 112 before the Math node's four words a slot, batch 160), the
-        // atlas's and the table's own header words and the one instance's
-        // 42 (`INSTANCE_WORDS` + 2: the record, its top-tree slot and its
-        // draw slot, `Trees::inst_words`) — is the tightest binding.
-        assert_eq!(whole, render(1136, 4));
-        assert!(refused(1132, 4), "the data table does not fit");
+        // 832 bytes: the data table — one 164-word material, the atlas
+        // and table header words, and the one instance's 42 words
+        // (`INSTANCE_WORDS` + its TLAS and draw slots) — is the tightest
+        // binding. Keep the byte boundary explicit so a record-layout
+        // change fails with the size it needs rather than silently ceasing
+        // to test the four-way split.
+        assert_eq!(whole, render(832, 4));
+        assert!(refused(828, 4), "the data table does not fit");
     }
 }
