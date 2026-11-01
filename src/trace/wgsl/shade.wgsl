@@ -207,7 +207,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         n = proc_normal(m, n, pobj, uv, inst, pix * h.t);
         if (dot(n, -d) < 0.0) { n = ng; }
         proc_n = n;
-        let off = ng * (p.eps + h.t * 1e-5);
+        let off = ng * hit_lift(h.t);
         let pos = hit + off;
         var base = proc_base(m, max(t.color.rgb, vec3<f32>(0.0)), pobj, uv, inst);
         var alpha = t.color.a;

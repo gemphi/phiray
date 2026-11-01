@@ -227,7 +227,8 @@ fn a_lamps_power_lands_on_a_surface_as_cycles_puts_it_there() {
     let point = Light { pos: at, kind: 1, color: [1000.0; 3], size: 0.0, dir: down, ..Light::default() };
     let got = centre_radiance(&gpu, overhead(point, 1));
     let off = (got / POINT_1000W_AT_2M - 1.0).abs();
-    assert!(off < TOLERANCE, "a 1000 W point at 2 m over albedo 0.8: {got:.3}, Cycles {POINT_1000W_AT_2M:.3} ({:.0}% out)", off * 100.0);
+    // Tighter than TOLERANCE: 10 % here was a shading point 10 cm off the floor.
+    assert!(off < 0.03, "a 1000 W point at 2 m over albedo 0.8: {got:.3}, Cycles {POINT_1000W_AT_2M:.3} ({:.0}% out)", off * 100.0);
 
     // A spot of the same power, well inside its cone: Blender masks a
     // point, it does not spread it, so the two agree.

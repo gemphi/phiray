@@ -357,6 +357,9 @@ fn lamp_query(s: Surf, seed: ptr<function, u32>) -> Shadowed {
     }
     let r1 = rnd(seed);
     let r2 = rnd(seed);
+    if (li.kind == 3u) {
+        return area_query(s, li, weight, r1, r2, rnd(seed));
+    }
     let aim = li.pos + onb(normalize(s.pos - li.pos), (r1 - 0.5) * li.size, (r2 - 0.5) * li.size);
     let to = aim - s.pos;
     let d2 = max(dot(to, to), 1e-6);
@@ -369,24 +372,65 @@ fn lamp_query(s: Surf, seed: ptr<function, u32>) -> Shadowed {
     var e = li.color / (4.0 * PI * d2);
     if (li.kind == 2u) {
         e *= spot_mask(li, l);
-    } else if (li.kind == 3u) {
-        // An area light shines from one side only, and its radiance is
-        // its flux over its area (`eevee_light.cc`'s
-        // `shape_radiance_get`: `L = P / (π A)` over the full
-        // rectangle). Far away that comes to `P cos / (π d²)` — the
-        // area cancels, which is what Blender means by "make
-        // illumination power constant" — and `e` already carries
-        // `1/(4π d²)`, so the factor is 4 (§55).
-        //
-        // Close up the source is not a point. The disk of the same area
-        // puts `L π r² / (r² + d²)` on a surface, with `r² = A/π`, so
-        // the whole of the correction is `d²` becoming `d² + A/π`
-        // (§57). At a metre square and two metres away that is 1.877
-        // against Cycles' 1.862, where the far-field form gives 2.026.
-        let shape = li.shape == AREA_DISK || li.shape == AREA_ELLIPSE;
-        let a = max(li.size * li.size_y, 0.0) * select(1.0, 0.25 * PI, shape);
-        e *= max(dot(-l, li.dir), 0.0) * 4.0 * d2 / (d2 + a / PI);
     }
+    if (max(e.r, max(e.g, e.b)) < 1e-5) { return unshadowed(); }
+    return Shadowed(brdf(s, l, e) * weight, l, sqrt(d2) * 0.999);
+}
+
+// How far off a surface its shading point sits, for a ray that came `t` to it:
+// enough to clear the rounding in `o + d * t`. An orthographic camera's ray
+// starts 1e4 behind the pivot, so that distance is no measure of the scene. At
+// 1e-5 of it a floor shaded from 10 cm up, every lamp 2 m above it read 10 %
+// too bright, and only its rounding, one part in four million, is real.
+fn hit_lift(t: f32) -> f32 {
+    let start = 1.0e4 / p.units;
+    if (p.persp == 0u && t > start * 0.5) {
+        return p.eps + abs(t - start) * 1e-5 + start * 2.4e-7;
+    }
+    return p.eps + t * 1e-5;
+}
+
+// An area light seen from `s`: a point of its own shape, its radiance its flux
+// over its area, `L = P / (π A)`, shining from one side only and judged from
+// that point. Aimed from its centre, a surface over the middle of a wide light
+// saw it edge on and got nothing (Lava City's 141 m disks, under the mannequin).
+//
+// The point comes one of two ways, as a chance `near` that grows with how much
+// of the view the light fills. Evenly over the shape, as Cycles draws an
+// ellipse (`area_light_sample`), is right for a light far off. Close to a wide
+// one nearly all its light comes from the few points just below the surface,
+// so that alone is rare spikes; Cycles has the BSDF's rays hitting the light to
+// fill them in, and this has no such rays. So the other way draws a direction
+// cosine-weighted about the light's normal and takes where it meets the plane,
+// which puts points where the light is. A direction that misses the shape
+// carries nothing. The pdf is the mix of both, so the image is the same.
+fn area_query(s: Surf, li: Light, weight: f32, r1: f32, r2: f32, pick: f32) -> Shadowed {
+    let height = dot(s.pos - li.pos, li.dir);
+    if (height <= 0.0) { return unshadowed(); }
+    let round = li.shape == AREA_DISK || li.shape == AREA_ELLIPSE;
+    let half = vec2<f32>(li.size, li.size_y) * 0.5;
+    let area = max(li.size * li.size_y * select(1.0, 0.25 * PI, round), 1e-8);
+    let up = cross(li.dir, li.right);
+    let off = s.pos - li.pos;
+    let near = area / (area + PI * dot(off, off));
+    var on = vec2<f32>(0.0);
+    if (pick < near) {
+        let spread = sqrt(r1 / max(1.0 - r1, 1e-6)) * height;
+        on = vec2<f32>(cos(2.0 * PI * r2), sin(2.0 * PI * r2)) * spread + vec2<f32>(dot(off, li.right), dot(off, up));
+        let unit = on / max(half, vec2<f32>(1e-8));
+        let inside = select(max(abs(unit.x), abs(unit.y)) <= 1.0, dot(unit, unit) <= 1.0, round);
+        if (!inside) { return unshadowed(); }
+    } else {
+        let disk = vec2<f32>(cos(2.0 * PI * r2), sin(2.0 * PI * r2)) * sqrt(r1);
+        on = select(vec2<f32>(r1, r2) * 2.0 - 1.0, disk, round) * half;
+    }
+    let to = li.pos + li.right * on.x + up * on.y - s.pos;
+    let d2 = max(dot(to, to), 1e-6);
+    let l = to / sqrt(d2);
+    let facing = max(dot(-l, li.dir), 0.0);
+    // In area measure: `1 / A` evenly, `cos² / (π d²)` by direction.
+    let pdf = (1.0 - near) / area + near * facing * facing / (PI * d2);
+    let e = li.color / (PI * area) * facing / d2 / max(pdf, 1e-12);
     if (max(e.r, max(e.g, e.b)) < 1e-5) { return unshadowed(); }
     return Shadowed(brdf(s, l, e) * weight, l, sqrt(d2) * 0.999);
 }

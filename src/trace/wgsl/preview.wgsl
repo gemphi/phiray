@@ -167,7 +167,7 @@ fn preview_lobe(h: Hit, m: u32, o: vec3<f32>, d: vec3<f32>, foot: f32, i: u32, f
     n = proc_normal(m, n, pobj, uv, inst, foot);
     if (dot(n, -d) < 0.0) { n = ng; }
     proc_n = n;
-    let off = ng * (p.eps + h.t * 1e-5);
+    let off = ng * hit_lift(h.t);
     let pos = hit + off;
     var base = proc_base(m, max(t.color.rgb, vec3<f32>(0.0)), pobj, uv, inst);
     var alpha = t.color.a;

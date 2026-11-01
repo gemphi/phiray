@@ -3,10 +3,16 @@ fn texel(base: u32, w: u32, x: i32, y: i32) -> vec4<f32> {
     return vec4<f32>(f32(c & 255u), f32((c >> 8u) & 255u), f32((c >> 16u) & 255u), f32(c >> 24u)) / 255.0;
 }
 
+// The sRGB curve. A plain 2.2 reads a dark value far too dark: 0.04 is 0.0031
+// on the curve and 0.0008 as a power, and the bakes write the curve.
+fn srgb_decode(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+}
+
 // Colour textures are sRGB; normal maps are read raw (`sample_raw`).
 fn sample_tex(id: u32, uv: vec2<f32>) -> vec4<f32> {
     let s = sample_raw(id, uv);
-    return vec4<f32>(pow(s.rgb, vec3<f32>(2.2)), s.a);
+    return vec4<f32>(srgb_decode(s.rgb), s.a);
 }
 
 // Emitted radiance at barycentrics `bary` (emission texture when linked).
@@ -64,7 +70,7 @@ fn sample_raw_lod(id: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
 
 fn sample_tex_lod(id: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
     let s = sample_raw_lod(id, uv, lod);
-    return vec4<f32>(pow(s.rgb, vec3<f32>(2.2)), s.a);
+    return vec4<f32>(srgb_decode(s.rgb), s.a);
 }
 
 fn sample_raw(id: u32, uv: vec2<f32>) -> vec4<f32> {
