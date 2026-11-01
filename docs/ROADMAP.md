@@ -876,7 +876,7 @@ are slotted where physics needs them.
 | **4** | **M5** Soft bodies (surface XPBD with goal) | 5-8 | Blender soft body files |
 | 4 | **M6** Bake to disk; parity fixtures against Blender bakes | 4-6 | Reproducible renders of simulated shots; known divergence from Blender, measured |
 | 4 | **R4** Tiled multi-camera (port step 5) | 5-8 | Asset browser thumbnails, material previews, quad view in one dispatch |
-| 4 | **R5** GPU-resident display (shared D3D handle, or gpui's wgpu renderer `phigpu/gpui_wgpu`) | 5-10 | Full-rate viewport; removes the per-frame readback that physics playback would double |
+| 4 | **R5** GPU-resident display (shared D3D handle, or gpui's wgpu renderer `appkit/gpu/gpui_wgpu`) | 5-10 | Full-rate viewport; removes the per-frame readback that physics playback would double |
 | **5** | Renderer gaps by value per day: bloom and exposure (3-5), OIDN (3-5), light tree (8-12), volumes (8-12), random-walk SSS (8-12), hair (10-15), node interpreter (20-30), Preview probes (15-25), streaming past 20 M triangles (10-15) | as listed | Closer to Cycles and EEVEE in what files can show |
 
 Totals: physics M0 to M6, 51-72 d; Warp port R-overlay, R1, R3, R4, 22-33 d;

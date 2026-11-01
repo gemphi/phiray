@@ -193,7 +193,7 @@ dropped by Reduce Transparency).
 
 **The blur half is blocked, and the gate is real.** It needs the renderer
 that draws the UI to render to an offscreen target, blur it, then composite
-the glass surfaces over it. That is `crates/phigpu/gpui_wgpu`
+the glass surfaces over it. That is `crates/appkit/gpu/gpui_wgpu`
 (`wgpu_renderer.rs`, 1,913 lines) — **not phiray**, which draws the 3D canvas,
 and not phiphx. And phiber on Windows currently runs gpui's **DirectX**
 renderer (`gpui_windows/directx_renderer.rs`), as phikit's own `Cargo.toml`
