@@ -332,25 +332,41 @@ fn rig_fill(s: Surf) -> vec3<f32> {
     return brdf(s, fill, vec3<f32>(0.45));
 }
 
-// One lamp per shading point, picked in proportion to its power, its
-// light divided by the chance of the pick — Cycles' light distribution
-// with Light Tree off (`light_distribution_sample`). This took up to four
-// lamps a point, each with its own shadow ray, and a path makes a shading
-// point at every bounce: thirty and more rays a sample on pose 26, where
-// Cycles spends about ten. The expected image is the same.
+// One lamp per shading point, its light divided by the chance of the pick —
+// Cycles' light distribution (`light_distribution_sample`). This took up to
+// four lamps a point, each with its own shadow ray, and a path makes a
+// shading point at every bounce: thirty and more rays a sample on pose 26,
+// where Cycles spends about ten. The expected image is the same.
+//
+// The pick follows the light that arrives here (`lamp_reach`), not the
+// power alone: in a city of lamps, the one across the street was drawn as
+// often as the one beside the figure, and most shadow rays went to lamps
+// too far off to matter. Cycles' Light Tree weighs by distance the same way.
 fn lamp_query(s: Surf, seed: ptr<function, u32>) -> Shadowed {
+    // In one pass, as a reservoir of one: each lamp replaces the one held
+    // with the chance of its share of the light seen so far, and the single
+    // random number is stretched back over what is left of it after each
+    // choice, so it stays uniform without drawing another.
     var total = 0.0;
-    for (var k = 0u; k < p.count; k++) { total += lamp_power(p.lights[k]); }
-    if (total <= 0.0) { return unshadowed(); }
-    let u = rnd(seed) * total;
-    var idx = p.count - 1u;
-    var run = 0.0;
+    var idx = 0u;
+    var held = 0.0;
+    var u = rnd(seed);
     for (var k = 0u; k < p.count; k++) {
-        run += lamp_power(p.lights[k]);
-        if (u < run) { idx = k; break; }
+        let w = lamp_reach(p.lights[k], s.pos);
+        if (w <= 0.0) { continue; }
+        total += w;
+        let share = w / total;
+        if (u < share) {
+            idx = k;
+            held = w;
+            u = u / share;
+        } else {
+            u = (u - share) / (1.0 - share);
+        }
     }
+    if (total <= 0.0 || held <= 0.0) { return unshadowed(); }
     let li = p.lights[idx];
-    let weight = total / max(lamp_power(li), 1e-12);
+    let weight = total / held;
     if (li.kind == 0u) {
         let l = cone_dir(-li.dir, li.size * 0.5, seed);
         return Shadowed(brdf(s, l, li.color) * weight, l, INF);
@@ -435,22 +451,19 @@ fn area_query(s: Surf, li: Light, weight: f32, r1: f32, r2: f32, pick: f32) -> S
     return Shadowed(brdf(s, l, e) * weight, l, sqrt(d2) * 0.999);
 }
 
-// How much a lamp is picked for (`lamp_query`): its emitted power, in the units
-// its colour carries — watts for point, spot and area lamps
-// (`rendered/lamp.rs`), irradiance for a sun, which reaches the whole scene
-// and so is weighed as that irradiance over the scene's cross-section
-// (`p.ao` is 8% of the scene's extent). Only the ratios matter: a pick in
-// proportion to them is unbiased whatever they are, and the closer they
-// follow the light that arrives, the less noise a sample carries.
-fn lamp_power(li: Light) -> f32 {
+// How much of a lamp reaches `at`, which is what `lamp_query` picks by: a
+// sun's irradiance as it is, any other lamp's power over the sphere at its
+// distance. The distance is never taken below the lamp's own size or a small
+// share of the scene, so a lamp close by is not picked so often that the
+// others' rare picks weigh enough to sparkle. Every lamp keeps a chance, so
+// nothing it lights goes missing.
+fn lamp_reach(li: Light, at: vec3<f32>) -> f32 {
     let lum = dot(max(li.color, vec3<f32>(0.0)), vec3<f32>(0.2126, 0.7152, 0.0722));
-    if (li.kind == 0u) {
-        let r = p.ao / 0.08;
-        return lum * PI * r * r;
-    }
-    return lum;
+    if (li.kind == 0u) { return lum; }
+    let to = li.pos - at;
+    let near = max(li.size * 0.5, p.ao * 0.05);
+    return lum / (4.0 * PI * (dot(to, to) + near * near));
 }
-
 
 // Probability that `glow_query` picks face `f` (0 when it does not glow).
 // The share of the light table a hit holds: its (face, instance) pair,

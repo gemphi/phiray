@@ -79,7 +79,7 @@ fn prefiltered(d: vec3<f32>, rough: f32) -> vec3<f32> {
 // Direct light from the lamps, each shadowed over its shape
 // (`shadow.wgsl`: EEVEE aims its shadow ray at a point on the light, so a
 // Radius or a Sun Angle gives a penumbra) — every lamp, no pick among
-// them (`lamp_query` draws one by power; nothing here is drawn).
+// them (`lamp_query` draws one by the light that reaches the point; nothing here is drawn).
 fn preview_lamps(s: Surf) -> vec3<f32> {
     var c = vec3<f32>(0.0);
     if (p.count == 0u) {
