@@ -25,10 +25,22 @@ impl Pass {
     /// a new scene, a new pass, reuses it.
     fn pipeline<K: Kernel>(&mut self, gpu: &Gpu) -> wgpu::ComputePipeline {
         let compiled = gpu.pipeline(K::key(), || {
-            let module = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            let desc = wgpu::ShaderModuleDescriptor {
                 label: Some(K::NAME),
                 source: wgpu::ShaderSource::Wgsl(K::source().into()),
-            });
+            };
+            // Our own kernels, so no checks woven into them: naga otherwise
+            // guards every buffer read and counts every loop, the BVH walk
+            // included. `PHIRAY_CHECKED=1` puts them back to chase a kernel
+            // that reads past its buffer or never leaves a loop.
+            let module = match std::env::var_os("PHIRAY_CHECKED") {
+                Some(_) => gpu.device.create_shader_module(desc),
+                // SAFETY: the kernels are this crate's, every one sizes its
+                // buffers from the dispatch it is given and bounds its loops
+                // (the traversal by its stack). The tests run them this way;
+                // with `PHIRAY_CHECKED=1` they run them checked.
+                None => unsafe { gpu.device.create_shader_module_trusted(desc, wgpu::ShaderRuntimeChecks::unchecked()) },
+            };
             gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(K::NAME),
                 layout: None,

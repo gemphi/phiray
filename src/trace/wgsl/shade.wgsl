@@ -264,8 +264,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // afterwards. The branch changes no estimator or random stream on
         // nonzero lobes.
         let diffuse_weight = mix(s.albedo, s.albedo * s.sss_tint, bleed) * opaque;
-        if (max(diffuse_weight.r, max(diffuse_weight.g, diffuse_weight.b)) > 0.0) {
-            bounced += diffuse_weight * indirect(pos, n, &seed, diffuse_on);
+        // One lobe a hit, as Cycles picks one closure (`surface_shader_bsdf_sample`):
+        // the diffuse path or the glossy ray, chosen by how much each is
+        // likely to bring and divided by the chance it was chosen. Both used
+        // to be traced at every hit, a whole diffuse path of up to four
+        // bounces beside every glossy ray. The pick is kept off the extremes
+        // so neither lobe's weight ever grows large enough to sparkle.
+        let lw = vec3<f32>(0.2126, 0.7152, 0.0722);
+        let ndv = max(dot(n, -d), 1e-4);
+        let gloss_guess = s.f0 + (vec3<f32>(1.0) - s.f0) * pow(1.0 - ndv, 5.0);
+        let pd = dot(max(diffuse_weight, vec3<f32>(0.0)), lw);
+        let pg = select(0.0, dot(gloss_guess, lw), glossy_on);
+        var p_diffuse = select(1.0, pd / (pd + pg), pd + pg > 0.0);
+        if (pd > 0.0 && pg > 0.0) { p_diffuse = clamp(p_diffuse, 0.15, 0.85); }
+        let take_diffuse = rnd(&seed) < p_diffuse;
+        if (take_diffuse && pd > 0.0) {
+            bounced += diffuse_weight * indirect(pos, n, &seed, diffuse_on) / p_diffuse;
         }
 
         // Glossy reflection: one GGX sample the way Cycles takes it
@@ -289,7 +303,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Fresnel at the microfacet, not the macro normal. The glass path
         // below reuses it for the energy the reflection took.
         let fres = f0 + (1.0 - f0) * pow(1.0 - cos_hi, 5.0);
-        if (glossy_on && dot(refl, ng) > 0.0 && cos_hi > 0.0 && cos_no > 0.0) {
+        if (!take_diffuse && glossy_on && dot(refl, ng) > 0.0 && cos_hi > 0.0 && cos_no > 0.0) {
             let rh = trace(pos, refl, INF, false);
             var rc = env_at(refl);
             // A reflection that reaches the world is weighted against the
@@ -303,7 +317,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let pe = env_pdf(refl);
                 wg = pg * pg / max(pg * pg + pe * pe, 1e-12);
             }
-            bounced += fres * rc * ggx_weight(ggx_a * ggx_a, max(dot(n, v), 1e-4), cos_no) * wg;
+            bounced += fres * rc * ggx_weight(ggx_a * ggx_a, max(dot(n, v), 1e-4), cos_no) * wg / (1.0 - p_diffuse);
         }
         c += clamp_light(bounced, p.limit.y);
         col += thr * c;
