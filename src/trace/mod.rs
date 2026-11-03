@@ -762,15 +762,19 @@ impl Tracer {
             h,
             // Tuned on Female-01: a normal has to agree closely, an albedo
             // less so (a noisy albedo is still a texture), and depth is
-            // relative so the same figure works at any scale.
-            strength: [64.0, 8.0, 40.0, 0.0],
+            // relative so the same figure works at any scale. The last is the
+            // stop on the light itself (`denoise.wgsl`): noise still averages
+            // out, a real change of brightness stays.
+            strength: [64.0, 8.0, 40.0, 7.0],
             view: cam.view,
             keep: u32::from(keep),
             ..Default::default()
         };
         let mut pass = Pass::default();
-        for (i, step) in [1u32, 2, 4, 8, 16].into_iter().enumerate() {
-            let params = DenoiseParams { step, round: i as u32, last: u32::from(step == 16), ..base };
+        // Four passes, a reach of 30 pixels: a fifth reached 62 and blurred across
+        // whole walls for noise the first four had already taken out.
+        for (i, step) in [1u32, 2, 4, 8].into_iter().enumerate() {
+            let params = DenoiseParams { step, round: i as u32, last: u32::from(step == 8), ..base };
             pass.add::<Denoise>(gpu, n, params, &[px.buffer()]);
         }
         pass.run(gpu);

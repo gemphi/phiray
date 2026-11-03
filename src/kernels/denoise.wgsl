@@ -42,16 +42,39 @@ fn read_in(i: u32) -> vec3<f32> {
 
 const KERNEL: array<f32, 3> = array<f32, 3>(0.375, 0.25, 0.0625);
 
+fn luma_of(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = item(gid, p.groups_x);
     if (i >= p.n) { return; }
     let x = i32(i % p.w);
     let y = i32(i / p.w);
-    let centre = read_in(i);
+    // A firefly: one sample's lucky bright path, far above everything round it.
+    // The stop on the light below would protect it as a real change of
+    // brightness, so it goes first, in the first pass, for what surrounds it.
+    var centre = read_in(i);
+    if (p.round == 0u) {
+        var near_top = 0.0;
+        var near_sum = vec3<f32>(0.0);
+        var near_n = 0.0;
+        for (var dy = -1; dy <= 1; dy++) {
+            for (var dx = -1; dx <= 1; dx++) {
+                let sx = x + dx;
+                let sy = y + dy;
+                if ((dx == 0 && dy == 0) || sx < 0 || sy < 0 || sx >= i32(p.w) || sy >= i32(p.h)) { continue; }
+                let c = read_in(u32(sy) * p.w + u32(sx));
+                near_top = max(near_top, luma_of(c));
+                near_sum += c;
+                near_n += 1.0;
+            }
+        }
+        if (near_n > 0.0 && luma_of(centre) > 1.5 * near_top + 0.05) { centre = near_sum / near_n; }
+    }
     let cn = normal_of(i);
     let ca = albedo_of(i);
     let cd = depth_of(i);
+    let lc = luma_of(centre);
     var sum = vec3<f32>(0.0);
     var weight = 0.0;
     for (var dy = -2; dy <= 2; dy++) {
@@ -63,12 +86,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             // A ray that met nothing and one that hit a surface never share a
             // neighbourhood, whatever their other channels say.
             if ((depth_of(j) < 0.0) != (cd < 0.0)) { continue; }
-            let tap = read_in(j);
+            // The centre tap is the one the firefly check may have replaced.
+            let tap = select(read_in(j), centre, j == i);
             // Edge stops: how far this tap's guides are from the centre's.
             let dn = max(0.0, 1.0 - dot(cn, normal_of(j)));
             let da = length(albedo_of(j) - ca);
             let dd = abs(depth_of(j) - cd) / max(abs(cd), 1e-3);
-            let stop = exp(-dn * p.strength.x - da * p.strength.y - dd * p.strength.z);
+            // And the light itself, relative to how bright it is here: the
+            // guides cannot see a soft shadow or a reflection on a flat wall,
+            // so without this the widest passes smeared them into blotches.
+            let dl = abs(luma_of(tap) - lc) / (0.08 + lc);
+            let stop = exp(-dn * p.strength.x - da * p.strength.y - dd * p.strength.z - dl * dl * p.strength.w);
             let k = KERNEL[abs(dx)] * KERNEL[abs(dy)];
             sum += tap * k * stop;
             weight += k * stop;

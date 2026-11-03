@@ -169,7 +169,7 @@ impl Tri {
 /// basis `right, up, back` around `pivot` and divided by `units` (view units per
 /// world unit). Perspective puts the eye `dist` along `back`.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Camera {
     pub n: u32,
     pub groups_x: u32,
@@ -490,7 +490,14 @@ impl Look {
     }
 }
 
-pub const LIGHTS: usize = 32;
+pub const LIGHTS: usize = 64;
+
+// Every field's default is zero, and `derive(Default)` stops at arrays of 32.
+impl Default for Camera {
+    fn default() -> Self {
+        Self::zeroed()
+    }
+}
 
 /// Pack linear RGB into Radiance RGBE: three 8-bit mantissas and one shared
 /// exponent, biased by 128 (`IMB_radiance_hdr.cc`).

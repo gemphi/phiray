@@ -235,6 +235,9 @@ impl Gpu {
             })
             .await
             .ok()?;
+        // Everything after a lost device fails as "buffer is invalid", so this
+        // is the one place the reason is ever seen.
+        device.set_device_lost_callback(|reason, message| eprintln!("phiray: GPU device lost ({reason:?}): {message}"));
         Some(Self { device, queue, info: adapter.get_info(), adapter: picked, pipelines: Arc::default(), rasters: Arc::default() })
     }
 
