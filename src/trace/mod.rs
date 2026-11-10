@@ -49,7 +49,7 @@ pub use srgb::Srgb;
 pub use scene::Scene;
 
 use crate::bvh::{Aabb, Node};
-use crate::gpu::{Gpu, GpuArray, Pass, Visibility};
+use crate::gpu::{Clock, Gpu, GpuArray, Pass, Time, Visibility};
 use crate::kernel::Dispatch;
 use crate::mode::Mode;
 
@@ -95,6 +95,11 @@ pub struct Tracer {
     last: Option<Camera>,
     frame: u32,
     pass: Pass,
+    /// The GPU's own time for a sample (gpu/clock.rs); None where the
+    /// device has no timestamp queries, and a sync a sample stands in.
+    clock: Option<Clock>,
+    /// What the last sample cost, submit and GPU apart ([Self::time]).
+    time: Time,
     size: (u32, u32),
     /// Emissive faces (Camera::glow).
     glow: u32,
@@ -310,6 +315,8 @@ impl Tracer {
             last: None,
             frame: 0,
             pass: Pass::default(),
+            clock: Clock::new(gpu),
+            time: Time::default(),
             size: (0, 0),
             extent,
             mode: Mode::Rendered,
@@ -636,12 +643,17 @@ impl Tracer {
         if let Some(vis) = &self.vis {
             vis.draw(gpu, &cam, &self.draws);
         }
+        // Every sample is timed and waited for: a single slice used to
+        // return once submitted, and its caller booked the GPU's work to
+        // whatever waited next (the readback). `Gpu::waited` must not set
+        // the slice count, nor `wait_for` bound a slice (both tried).
+        let clock = self.clock.as_ref();
         if slices == 1 {
-            self.pass.run(gpu);
+            self.time = Clock::run(clock, gpu, &self.pass, 0..steps);
             return Some((self.frame, self.frame + 1 >= self.samples()));
         }
-        for k in 0..slices {
-            self.pass.run_step(gpu, k as usize);
+        self.time = Time::default();
+        for k in 0..slices as usize {
             // NOTE (unresolved): this drain is `device.poll(wait_indefinitely())`
             // and its own doc says it never returns if the device is lost.
             // On a 0.1 MB scene a 64-sample render was measured at 1830 s of
@@ -656,17 +668,24 @@ impl Tracer {
             // ten-minute `PatienceFor` — far too long to bound one dispatch.
             // A fix needs a bounded poll that allocates nothing, and a
             // per-dispatch budget of its own; neither exists yet.
-            gpu.wait();
-            if k + 1 < slices && !go() {
+            // The clock's own drain is the one this slice always had.
+            self.time += Clock::run(clock, gpu, &self.pass, k..k + 1);
+            if k + 1 < slices as usize && !go() {
                 // Abandoned: the next sample starts the image over.
                 self.last = None;
                 return None;
             }
         }
-        for k in slices as usize..steps {
-            self.pass.run_step(gpu, k);
+        if steps > slices as usize {
+            self.time += Clock::run(clock, gpu, &self.pass, slices as usize..steps);
         }
         Some((self.frame, self.frame + 1 >= self.samples()))
+    }
+    /// What the last finished sample cost: the time to record and submit
+    /// it, and the GPU's time to run it. A host sizes its slices by
+    /// [`Time::gpu`]; a readback after the sample is only the copy.
+    pub fn time(&self) -> Time {
+        self.time
     }
 
     /// Every byte this tracer holds on the device: the scene (tree,

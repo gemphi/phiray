@@ -6,6 +6,7 @@
 
 mod adapter;
 mod array;
+mod clock;
 mod pass;
 mod raster;
 /// Reading a texture back without waiting on the render thread
@@ -17,6 +18,7 @@ mod shared;
 
 pub use adapter::{GpuAdapter, GpuAdapters};
 pub use array::GpuArray;
+pub use clock::{Clock, Time};
 pub use pass::Pass;
 pub use raster::Visibility;
 pub use readback::{AsyncReadback, ReadbackBuffer, padded_bytes_per_row};
@@ -86,6 +88,8 @@ pub struct Gpu {
     pub info: wgpu::AdapterInfo,
     /// The adapter as the Preferences list it.
     pub adapter: GpuAdapter,
+    /// Opened with timestamp queries, so [Clock] reads the GPU's own time.
+    pub timed: bool,
     /// Compute pipelines compiled on this device, by kernel: a slot each,
     /// so compiling one kernel holds up only the callers that want that
     /// kernel ([`Gpu::pipeline`]).
@@ -227,10 +231,14 @@ impl Gpu {
         let (adapter, picked) = GpuAdapters::chosen().await?;
         // Everything the adapter offers (kernels need > 4 storage buffers).
         let limits = adapter.limits();
+        // Timestamps only where the adapter offers them: asking for a
+        // feature it lacks fails the open, and Clock falls back to a sync.
+        let timed = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("phiray"),
                 required_limits: limits,
+                required_features: if timed { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() },
                 ..Default::default()
             })
             .await
@@ -238,7 +246,7 @@ impl Gpu {
         // Everything after a lost device fails as "buffer is invalid", so this
         // is the one place the reason is ever seen.
         device.set_device_lost_callback(|reason, message| eprintln!("phiray: GPU device lost ({reason:?}): {message}"));
-        Some(Self { device, queue, info: adapter.get_info(), adapter: picked, pipelines: Arc::default(), rasters: Arc::default() })
+        Some(Self { device, queue, info: adapter.get_info(), adapter: picked, timed, pipelines: Arc::default(), rasters: Arc::default() })
     }
 
     /// Largest storage buffer one binding may cover on this device.

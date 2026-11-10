@@ -108,15 +108,18 @@ impl Pass {
     /// Replay every step in one command buffer.
     pub fn run(&self, gpu: &Gpu) {
         let mut enc = gpu.device.create_command_encoder(&Default::default());
-        {
-            let mut cp = enc.begin_compute_pass(&Default::default());
-            for s in &self.steps {
-                cp.set_pipeline(&s.pipeline);
-                cp.set_bind_group(0, &s.group, &[]);
-                cp.dispatch_workgroups(s.dispatch.x, s.dispatch.y, 1);
-            }
-        }
+        self.record(&mut enc, 0..self.steps.len(), None);
         gpu.queue.submit([enc.finish()]);
+    }
+    /// Record `steps` into `enc` as one compute pass, stamped by `writes`
+    /// when given (`Clock::run`).
+    pub(super) fn record(&self, enc: &mut wgpu::CommandEncoder, steps: std::ops::Range<usize>, writes: Option<wgpu::ComputePassTimestampWrites>) {
+        let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: writes });
+        for s in &self.steps[steps] {
+            cp.set_pipeline(&s.pipeline);
+            cp.set_bind_group(0, &s.group, &[]);
+            cp.dispatch_workgroups(s.dispatch.x, s.dispatch.y, 1);
+        }
     }
 
     /// Replay one step in its own command buffer.
