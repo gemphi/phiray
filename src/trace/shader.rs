@@ -1,6 +1,6 @@
 //! The path-tracing kernels (WGSL in `wgsl/`).
 
-use super::kernel::Camera;
+use super::camera::Camera;
 use crate::kernel::{Bind, Kernel};
 
 /// The path tracer with each large array over 2 bindings (8 storage bindings).
@@ -180,7 +180,9 @@ macro_rules! trace_wgsl {
             include_str!("wgsl/bvh.wgsl"),
             include_str!("wgsl/view.wgsl"),
             include_str!("wgsl/util.wgsl"),
+            include_str!("wgsl/brdf.wgsl"),
             include_str!("wgsl/light.wgsl"),
+            include_str!("wgsl/integrate.wgsl"),
             include_str!("wgsl/shade.wgsl"),
         )
     };
@@ -207,7 +209,9 @@ macro_rules! preview_wgsl {
             include_str!("wgsl/bvh.wgsl"),
             include_str!("wgsl/view.wgsl"),
             include_str!("wgsl/util.wgsl"),
+            include_str!("wgsl/brdf.wgsl"),
             include_str!("wgsl/light.wgsl"),
+            include_str!("wgsl/integrate.wgsl"),
             include_str!("wgsl/shadow.wgsl"),
             include_str!("wgsl/preview.wgsl"),
         )
@@ -249,7 +253,9 @@ const TRACE_FILES_2: &[&str] = &[
     "bvh.wgsl",
     "view.wgsl",
     "util.wgsl",
+    "brdf.wgsl",
     "light.wgsl",
+    "integrate.wgsl",
     "shade.wgsl",
 ];
 
@@ -269,7 +275,9 @@ const TRACE_FILES_4: &[&str] = &[
     "bvh.wgsl",
     "view.wgsl",
     "util.wgsl",
+    "brdf.wgsl",
     "light.wgsl",
+    "integrate.wgsl",
     "shade.wgsl",
 ];
 

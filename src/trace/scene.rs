@@ -6,7 +6,8 @@
 //! `scene/object.cpp` has it (roadmap §4.4, Step 1).
 
 use super::instance::{IDENTITY, Instance};
-use super::kernel::{Atlas, Tri};
+use super::atlas::Atlas;
+use super::kernel::Tri;
 use super::mat::Mat;
 use super::mesh::Mesh;
 use crate::bvh::Aabb;
