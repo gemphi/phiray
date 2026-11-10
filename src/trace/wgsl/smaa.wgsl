@@ -86,7 +86,7 @@ fn blending_weights(i: u32, x: i32, y: i32) {
     let pixcoord = uv * m.zw;
     let offset0 = m.xyxy * vec4<f32>(-0.25, -0.125, 1.25, -0.125) + uv.xyxy;
     let offset1 = m.xyxy * vec4<f32>(-0.125, -0.25, -0.125, 1.25) + uv.xyxy;
-    let offset2 = m.xxyy * vec4<f32>(-2.0, 2.0, -2.0, 2.0) * SMAA_MAX_SEARCH_STEPS + vec4<f32>(offset0.xz, offset1.yw);
+    let offset2 = m.xxyy * vec4<f32>(-2.0, 2.0, -2.0, 2.0) * SMAA_MAX_SEARCH_STEP + vec4<f32>(offset0.xz, offset1.yw);
     var weights = vec4<f32>(0.0);
     var e = edges_texel(x, y);
     if (e.y > 0.0) {

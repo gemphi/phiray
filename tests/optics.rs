@@ -83,9 +83,9 @@ fn glowing_mesh_lights_its_surroundings() {
 
 #[test]
 fn bright_lamps_are_picked_more_often() {
-    use phiray::Lamps;
+    use phiray::LampList;
     let tri = |s: f32, e: f32| Tri::new([[0.0; 3], [s, 0.0, 0.0], [0.0, s, 0.0]], [[0.0, 0.0, 1.0]; 3], [0.0; 4]).with_optics([e; 3], 0.0, 1.5);
-    let lamps = Lamps::of(&[tri(1.0, 0.0), tri(2.0, 1.0), tri(1.0, 1.0), tri(1.0, 0.0)]);
+    let lamps = LampList::of(&[tri(1.0, 0.0), tri(2.0, 1.0), tri(1.0, 1.0), tri(1.0, 0.0)]);
     assert_eq!(lamps.ids, vec![1, 2]);
     assert!((lamps.cdf[0] - 0.8).abs() < 1e-5 && (lamps.cdf[1] - 1.0).abs() < 1e-6, "{:?}", lamps.cdf);
 

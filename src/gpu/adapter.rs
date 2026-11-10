@@ -106,14 +106,14 @@ impl GpuAdapter {
 }
 
 /// The adapters this machine has, and the one to prefer.
-pub struct GpuAdapters;
+pub struct GpuAdapterList;
 
 /// What `PHIRAY_GPU` or the Preferences asked for.
 static PREFERRED: Mutex<Option<String>> = Mutex::new(None);
 /// Every adapter the drivers report, read once.
 static FOUND: OnceLock<Vec<GpuAdapter>> = OnceLock::new();
 
-impl GpuAdapters {
+impl GpuAdapterList {
     fn instance() -> wgpu::Instance {
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env())
     }

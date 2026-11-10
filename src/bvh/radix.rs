@@ -38,16 +38,16 @@ use crate::kernel::{Bind, Kernel};
 use bytemuck::{Pod, Zeroable};
 
 /// Digit values in one pass, and the length of each half of `tally`.
-pub const BINS: u32 = 256;
+pub const BIN_COUNT: u32 = 256;
 /// Bits a pass sorts by.
 pub const DIGIT: u32 = 8;
 /// Passes to cover a 64-bit key.
-pub const PASSES: u32 = 64 / DIGIT;
+pub const PASS_COUNT: u32 = 64 / DIGIT;
 
 /// `shift` says which 8 bits of the key this dispatch sorts by.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct RadixParams {
+pub struct RadixParam {
     pub n: u32,
     pub groups_x: u32,
     pub shift: u32,
@@ -63,8 +63,8 @@ macro_rules! key {
     ($tail:expr) => {
         concat!(
             r#"
-struct Params { n: u32, groups_x: u32, shift: u32, _a: u32 }
-@group(0) @binding(0) var<uniform> p: Params;
+struct Param { n: u32, groups_x: u32, shift: u32, _a: u32 }
+@group(0) @binding(0) var<uniform> p: Param;
 
 fn digit(k: vec2<u32>, shift: u32) -> u32 {
     if (shift < 32u) { return (k.x >> shift) & 0xFFu; }
@@ -81,8 +81,8 @@ pub struct Seed;
 
 impl Kernel for Seed {
     const NAME: &'static str = "radix.seed";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Write];
-    type Params = RadixParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Write];
+    type Param = RadixParam;
     const WGSL: &'static str = key!(
         r#"
 @group(0) @binding(1) var<storage, read> codes: array<u32>;
@@ -103,8 +103,8 @@ pub struct Clear;
 
 impl Kernel for Clear {
     const NAME: &'static str = "radix.clear";
-    const BINDS: &'static [Bind] = &[Bind::Write];
-    type Params = RadixParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write];
+    type Param = RadixParam;
     const WGSL: &'static str = key!(
         r#"
 @group(0) @binding(1) var<storage, read_write> tally: array<u32>;
@@ -124,8 +124,8 @@ pub struct Count;
 
 impl Kernel for Count {
     const NAME: &'static str = "radix.count";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Write];
-    type Params = RadixParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Write];
+    type Param = RadixParam;
     const WGSL: &'static str = key!(
         r#"
 @group(0) @binding(1) var<storage, read> key: array<vec2<u32>>;
@@ -151,8 +151,8 @@ pub struct Offset;
 
 impl Kernel for Offset {
     const NAME: &'static str = "radix.offset";
-    const BINDS: &'static [Bind] = &[Bind::Write];
-    type Params = RadixParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write];
+    type Param = RadixParam;
     const WGSL: &'static str = key!(
         r#"
 @group(0) @binding(1) var<storage, read_write> tally: array<u32>;
@@ -182,8 +182,8 @@ pub struct Scatter;
 
 impl Kernel for Scatter {
     const NAME: &'static str = "radix.scatter";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Write, Bind::Write];
-    type Params = RadixParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Write, Bind::Write];
+    type Param = RadixParam;
     const WGSL: &'static str = key!(
         r#"
 @group(0) @binding(1) var<storage, read> src: array<vec2<u32>>;

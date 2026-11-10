@@ -3,7 +3,7 @@
 //! readback the build makes is the order it needs (see `jobs.md`).
 
 use super::build::{Bvh, Link};
-use super::kernels::{Karras, KarrasParams, Morton, MortonParams, Refit, RefitParams};
+use super::kernel::{Karras, KarrasParam, Morton, MortonParam, Refit, RefitParam};
 use super::sort::GpuSort;
 use super::node::{Aabb, Node};
 use crate::gpu::{Gpu, GpuArray, Pass};
@@ -32,7 +32,7 @@ impl GpuBvh {
             if e > 0.0 { 1.0 / e } else { 0.0 }
         });
         let codes = GpuArray::<u32>::from(gpu, &vec![0; n]);
-        let mp = MortonParams { lo: s.lo, inv, ..Default::default() };
+        let mp = MortonParam { lo: s.lo, inv, ..Default::default() };
         pass.add::<Morton>(gpu, n as u32, mp, &[gprims.buffer(), codes.buffer()]);
         pass.run(gpu);
 
@@ -48,7 +48,7 @@ impl GpuBvh {
         let links = if n > 1 {
             let out = GpuArray::<Link>::from(gpu, &vec![Link::default(); n - 1]);
             pass.clear();
-            let kp = KarrasParams { leaves: n as u32, ..Default::default() };
+            let kp = KarrasParam { leaves: n as u32, ..Default::default() };
             pass.add::<Karras>(gpu, n as u32 - 1, kp, &[sort.code().buffer(), out.buffer()]);
             pass.run(gpu);
             out.read(gpu)
@@ -80,7 +80,7 @@ impl GpuBvh {
         for k in 0..steps {
             let (src, dst) = if k % 2 == 0 { (&self.nodes, &self.scratch) } else { (&self.scratch, &self.nodes) };
             let bufs = [self.prims.buffer(), self.order.buffer(), src.buffer(), dst.buffer()];
-            self.refit.add::<Refit>(gpu, total, RefitParams::default(), &bufs);
+            self.refit.add::<Refit>(gpu, total, RefitParam::default(), &bufs);
         }
     }
 

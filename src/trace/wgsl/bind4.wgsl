@@ -1,4 +1,4 @@
-// Compact scene over 4 bindings per large array (see `binds2.wgsl`).
+// Compact scene over 4 bindings per large array (see `bind2.wgsl`).
 // A chunk is found by comparison, not by division. `i / p.split.x` is a
 // 32-bit integer divide by a runtime value, which a GPU has no instruction
 // for — it is emulated in ~20 instructions — and `node`, `face` and `vert`

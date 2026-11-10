@@ -26,6 +26,6 @@ mod world;
 
 pub use blend::{BlendBody, BlendObject, BlendShape, BlendWorld};
 pub use mesh::MeshCollider;
-pub use state::{Body, BodyConst, BodyPrev, Contact, DEACTIVATES, Kind, SLEEPING, Shape, ShapeKind};
+pub use state::{Body, BodyConst, BodyPrev, Contact, DEACTIVATION, Kind, SLEEPING, Shape, ShapeKind};
 pub use build::BodyDef;
 pub use world::World;

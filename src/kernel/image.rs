@@ -22,7 +22,7 @@ use bytemuck::{Pod, Zeroable};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct ConvolveParams {
+pub struct ConvolveParam {
     pub n: u32,
     pub groups_x: u32,
     pub w: u32,
@@ -39,11 +39,11 @@ pub struct Convolve;
 
 impl Kernel for Convolve {
     const NAME: &'static str = "image.convolve";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Read, Bind::Write];
-    type Params = ConvolveParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Read, Bind::Write];
+    type Param = ConvolveParam;
     const WGSL: &'static str = r#"
-struct Params { n: u32, groups_x: u32, w: u32, h: u32, kw: u32, kh: u32, _a: u32, _b: u32 }
-@group(0) @binding(0) var<uniform> p: Params;
+struct Param { n: u32, groups_x: u32, w: u32, h: u32, kw: u32, kh: u32, _a: u32, _b: u32 }
+@group(0) @binding(0) var<uniform> p: Param;
 @group(0) @binding(1) var<storage, read> weights: array<f32>;
 @group(0) @binding(2) var<storage, read> src: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read_write> out: array<vec4<f32>>;
@@ -92,7 +92,7 @@ impl ImageConvolution {
     /// Record the dispatch over a `w × h` image: `src` → `out`.
     pub fn run(&self, gpu: &Gpu, pass: &mut Pass, w: u32, h: u32, src: &GpuArray<[f32; 4]>, out: &GpuArray<[f32; 4]>) -> GpuArray<f32> {
         let weights = GpuArray::from(gpu, &self.weights);
-        let params = ConvolveParams { n: w * h, w, h, kw: self.width as u32, kh: self.height as u32, ..Default::default() };
+        let params = ConvolveParam { n: w * h, w, h, kw: self.width as u32, kh: self.height as u32, ..Default::default() };
         pass.add::<Convolve>(gpu, w * h, params, &[weights.buffer(), src.buffer(), out.buffer()]);
         weights
     }
@@ -124,7 +124,7 @@ impl ImageConvolution {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct BilateralParams {
+pub struct BilateralParam {
     pub n: u32,
     pub groups_x: u32,
     pub w: u32,
@@ -145,11 +145,11 @@ pub struct Bilateral;
 
 impl Kernel for Bilateral {
     const NAME: &'static str = "image.bilateral";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Write];
-    type Params = BilateralParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Write];
+    type Param = BilateralParam;
     const WGSL: &'static str = r#"
-struct Params { n: u32, groups_x: u32, w: u32, h: u32, radius: u32, _a: u32, inv2_spatial: f32, inv2_color: f32 }
-@group(0) @binding(0) var<uniform> p: Params;
+struct Param { n: u32, groups_x: u32, w: u32, h: u32, radius: u32, _a: u32, inv2_spatial: f32, inv2_color: f32 }
+@group(0) @binding(0) var<uniform> p: Param;
 @group(0) @binding(1) var<storage, read> src: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read_write> out: array<vec4<f32>>;
 
@@ -194,9 +194,9 @@ impl ImageBilateralFilter {
         Self { filter_radius: radius, spatial_sigma: spatial, color_sigma: color }
     }
 
-    fn params(&self, w: u32, h: u32) -> BilateralParams {
+    fn params(&self, w: u32, h: u32) -> BilateralParam {
         let inv2 = |s: f32| 1.0 / (2.0 * s.max(1e-6) * s.max(1e-6));
-        BilateralParams { n: w * h, w, h, radius: self.filter_radius as u32, inv2_spatial: inv2(self.spatial_sigma), inv2_color: inv2(self.color_sigma), ..Default::default() }
+        BilateralParam { n: w * h, w, h, radius: self.filter_radius as u32, inv2_spatial: inv2(self.spatial_sigma), inv2_color: inv2(self.color_sigma), ..Default::default() }
     }
 
     /// Record the dispatch over a `w × h` image: `src` → `out`.
@@ -238,7 +238,7 @@ impl ImageBilateralFilter {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct MatMulParams {
+pub struct MatMulParam {
     pub n: u32,
     pub groups_x: u32,
     /// `out[m × cols] = a[m × k] · b[k × cols]`, all row-major.
@@ -256,11 +256,11 @@ pub struct MatMul;
 
 impl Kernel for MatMul {
     const NAME: &'static str = "matrix.multiply";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Read, Bind::Write];
-    type Params = MatMulParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Read, Bind::Write];
+    type Param = MatMulParam;
     const WGSL: &'static str = r#"
-struct Params { n: u32, groups_x: u32, m: u32, cols: u32, k: u32, _a: u32, _b: u32, _c: u32 }
-@group(0) @binding(0) var<uniform> p: Params;
+struct Param { n: u32, groups_x: u32, m: u32, cols: u32, k: u32, _a: u32, _b: u32, _c: u32 }
+@group(0) @binding(0) var<uniform> p: Param;
 @group(0) @binding(1) var<storage, read> a: array<f32>;
 @group(0) @binding(2) var<storage, read> b: array<f32>;
 @group(0) @binding(3) var<storage, read_write> out: array<f32>;
@@ -297,7 +297,7 @@ impl MatrixMultiplication {
     /// Record `out = a · b`.
     pub fn run(&self, gpu: &Gpu, pass: &mut Pass, a: &GpuArray<f32>, b: &GpuArray<f32>, out: &GpuArray<f32>) {
         let (m, cols, k) = (self.m as u32, self.n as u32, self.k as u32);
-        let params = MatMulParams { n: m * cols, m, cols, k, ..Default::default() };
+        let params = MatMulParam { n: m * cols, m, cols, k, ..Default::default() };
         pass.add::<MatMul>(gpu, m * cols, params, &[a.buffer(), b.buffer(), out.buffer()]);
     }
 

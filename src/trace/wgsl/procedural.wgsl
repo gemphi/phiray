@@ -1,7 +1,7 @@
 // Procedural textures per pixel, Cycles' SVM (`noise.wgsl`,
 // `voronoi.wgsl`, `pattern.wgsl`; `displace.h`'s Bump here): a material
 // carries two procedural slots (`Mat::color_proc`, `bump_proc`; 40 words
-// each, `PROC_WORDS`) — a texture node, its coordinates (Generated, Object
+// each, `PROC_LEN`) — a texture node, its coordinates (Generated, Object
 // or UV through a Mapping node, whole: location, rotation, scale and
 // type), an optional colour
 // ramp baked to a 256 × 1 atlas image, and what it drives: the base colour
@@ -23,7 +23,7 @@
 // node's operation (`MATH_NONE` for none), 41–42 its second and third
 // Value sockets, 43 its Clamp.
 
-const PROC_WORDS: u32 = 44u;
+const PROC_LEN: u32 = 44u;
 // `Proc::kind`'s low byte.
 const PROC_NONE: u32 = 0u;
 const PROC_NOISE_FAC: u32 = 1u;

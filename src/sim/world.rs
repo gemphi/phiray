@@ -15,7 +15,7 @@ use super::contact;
 use super::math::*;
 use super::mesh::MeshCollider;
 use super::narrow::Ctx;
-use super::state::{Body, BodyConst, BodyPrev, Contact, DEACTIVATES, Kind, Shape, ShapeKind};
+use super::state::{Body, BodyConst, BodyPrev, Contact, DEACTIVATION, Kind, Shape, ShapeKind};
 
 pub struct World {
     pub bodies: Vec<Body>,
@@ -203,7 +203,7 @@ impl World {
     /// Blender's deactivation: under both thresholds for `sleep_after`.
     fn sleep(&mut self, dt: f32) {
         for (i, b) in self.bodies.iter_mut().enumerate() {
-            if !b.dynamic() || b.flags & DEACTIVATES == 0 {
+            if !b.dynamic() || b.flags & DEACTIVATION == 0 {
                 continue;
             }
             let [lin, ang] = self.sleep[i];

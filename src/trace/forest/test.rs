@@ -22,7 +22,7 @@ fn two_cubes() -> Scene {
 #[test]
 fn the_top_tree_leads_and_each_mesh_tree_is_shifted_into_place() {
     let mut s = two_cubes();
-    let (trees, order) = Trees::build(&s);
+    let (trees, order) = Forest::build(&s);
     assert_eq!(order.len(), 18);
     assert!(order[..6].iter().all(|&f| f < 6) && order[6..].iter().all(|&f| (6..18).contains(&f)), "each mesh's faces stay in its range: {order:?}");
     s.reorder(&order);
@@ -49,7 +49,7 @@ fn the_top_tree_leads_and_each_mesh_tree_is_shifted_into_place() {
     // The world spans both cubes; the instance table names both roots.
     assert!(trees.extent() > 10.0);
     let words = trees.inst_words(&s.insts, &s.meshes);
-    let w = INSTANCE_WORDS;
+    let w = INSTANCE_LEN;
     assert_eq!(words[24], roots[0]);
     assert_eq!(words[w + 24], roots[1]);
     assert_eq!(&words[2 * w..2 * w + 2], &trees.inst_order[..]);
@@ -60,7 +60,7 @@ fn the_top_tree_leads_and_each_mesh_tree_is_shifted_into_place() {
 #[test]
 fn moving_an_instance_moves_only_the_top_tree() {
     let mut s = two_cubes();
-    let (mut trees, order) = Trees::build(&s);
+    let (mut trees, order) = Forest::build(&s);
     s.reorder(&order);
     let before = trees.nodes(&s.meshes);
     s.insts[1].world = Instance::translation([0.0, 50.0, 0.0]);
@@ -84,8 +84,8 @@ fn the_draw_list_covers_every_instance_and_a_move_leaves_it_alone() {
     let hash = crate::trace::hash::ObjectHash(0);
     s.place(0, Instance::translation([0.0, 20.0, 0.0]), [1.0; 3], hash);
     s.seal();
-    let (mut trees, _) = Trees::build(&s);
-    let covered = |t: &Trees| {
+    let (mut trees, _) = Forest::build(&s);
+    let covered = |t: &Forest| {
         let mut seen: Vec<u32> = t.draws.iter().flat_map(|&[_, _, at, n]| t.draw_order[at as usize..(at + n) as usize].to_vec()).collect();
         seen.sort_unstable();
         seen
@@ -109,13 +109,13 @@ fn a_shared_mesh_has_one_tree_and_one_draw_of_many() {
     s.place(0, Instance::translation([0.0, 20.0, 0.0]), [1.0; 3], hash);
     s.place(0, Instance::translation([0.0, 40.0, 0.0]), [1.0; 3], hash);
     s.seal();
-    let (trees, _) = Trees::build(&s);
+    let (trees, _) = Forest::build(&s);
     assert_eq!((trees.blas.len(), s.insts.len(), trees.tlas_slots()), (2, 4, 7));
     assert_eq!(trees.inst_order.len(), 4, "every instance is a top-tree leaf");
     assert_eq!(trees.draws, vec![[0, 18, 0, 3], [18, 36, 3, 1]]);
     assert_eq!(trees.draw_order, vec![0, 2, 3, 1]);
     let words = trees.inst_words(&s.insts, &s.meshes);
-    let w = INSTANCE_WORDS;
+    let w = INSTANCE_LEN;
     assert_eq!((words[2 * w + 24], words[2 * w + 38]), (words[24], 0), "the third instance names the first mesh's root and id");
     assert!(trees.bounds().hi[1] >= 41.0);
 }

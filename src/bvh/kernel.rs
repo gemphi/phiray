@@ -6,7 +6,7 @@ use bytemuck::{Pod, Zeroable};
 /// Scene box for Morton normalisation.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct MortonParams {
+pub struct MortonParam {
     pub n: u32,
     pub groups_x: u32,
     pub _a: [u32; 2],
@@ -20,13 +20,13 @@ pub struct Morton;
 
 impl Kernel for Morton {
     const NAME: &'static str = "bvh.morton";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Write];
-    type Params = MortonParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Write];
+    type Param = MortonParam;
     const WGSL: &'static str = concat!(
         "struct Aabb { lo: vec3<f32>, _a: f32, hi: vec3<f32>, _b: f32 }\n",
         r#"
-struct Params { n: u32, groups_x: u32, _a: u32, _b: u32, lo: vec3<f32>, _c: f32, inv: vec3<f32>, _d: f32 }
-@group(0) @binding(0) var<uniform> p: Params;
+struct Param { n: u32, groups_x: u32, _a: u32, _b: u32, lo: vec3<f32>, _c: f32, inv: vec3<f32>, _d: f32 }
+@group(0) @binding(0) var<uniform> p: Param;
 @group(0) @binding(1) var<storage, read> prims: array<Aabb>;
 @group(0) @binding(2) var<storage, read_write> codes: array<u32>;
 
@@ -52,7 +52,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct KarrasParams {
+pub struct KarrasParam {
     pub n: u32,
     pub groups_x: u32,
     /// Number of leaves (= sorted codes).
@@ -64,12 +64,12 @@ pub struct Karras;
 
 impl Kernel for Karras {
     const NAME: &'static str = "bvh.karras";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Write];
-    type Params = KarrasParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Write];
+    type Param = KarrasParam;
     const WGSL: &'static str = r#"
-struct Params { n: u32, groups_x: u32, leaves: u32, _a: u32 }
+struct Param { n: u32, groups_x: u32, leaves: u32, _a: u32 }
 struct Link { left: u32, right: u32, first: u32, last: u32 }
-@group(0) @binding(0) var<uniform> p: Params;
+@group(0) @binding(0) var<uniform> p: Param;
 @group(0) @binding(1) var<storage, read> codes: array<u32>;
 @group(0) @binding(2) var<storage, read_write> links: array<Link>;
 
@@ -118,7 +118,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct RefitParams {
+pub struct RefitParam {
     pub n: u32,
     pub groups_x: u32,
     pub _a: [u32; 2],
@@ -129,14 +129,14 @@ pub struct Refit;
 
 impl Kernel for Refit {
     const NAME: &'static str = "bvh.refit";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Read, Bind::Read, Bind::Write];
-    type Params = RefitParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Read, Bind::Read, Bind::Write];
+    type Param = RefitParam;
     const WGSL: &'static str = concat!(
         "struct Aabb { lo: vec3<f32>, _a: f32, hi: vec3<f32>, _b: f32 }\n",
         "struct Node { lo: vec3<f32>, li: u32, hi: vec3<f32>, ri: u32 }\nconst LEAF: u32 = 0x80000000u;\n",
         r#"
-struct Params { n: u32, groups_x: u32, _a: u32, _b: u32 }
-@group(0) @binding(0) var<uniform> p: Params;
+struct Param { n: u32, groups_x: u32, _a: u32, _b: u32 }
+@group(0) @binding(0) var<uniform> p: Param;
 @group(0) @binding(1) var<storage, read> prims: array<Aabb>;
 @group(0) @binding(2) var<storage, read> order: array<u32>;
 @group(0) @binding(3) var<storage, read> src: array<Node>;

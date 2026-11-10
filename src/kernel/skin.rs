@@ -23,7 +23,7 @@ pub struct Pair {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct SkinParams {
+pub struct SkinParam {
     pub n: u32,
     pub groups_x: u32,
     /// Minimum total weight to move a vertex (Blender: 0.0001).
@@ -35,12 +35,12 @@ pub struct Skin;
 
 impl Kernel for Skin {
     const NAME: &'static str = "skin";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Read, Bind::Read, Bind::Read, Bind::Write];
-    type Params = SkinParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Read, Bind::Read, Bind::Read, Bind::Write];
+    type Param = SkinParam;
     const WGSL: &'static str = r#"
-struct Params { n: u32, groups_x: u32, min: f32, _pad: u32 }
+struct Param { n: u32, groups_x: u32, min: f32, _pad: u32 }
 struct Pair { bone: u32, weight: f32, next: u32, blend: f32 }
-@group(0) @binding(0) var<uniform> p: Params;
+@group(0) @binding(0) var<uniform> p: Param;
 @group(0) @binding(1) var<storage, read> rest: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> offsets: array<u32>;
 @group(0) @binding(3) var<storage, read> pairs: array<Pair>;

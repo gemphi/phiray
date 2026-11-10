@@ -1,6 +1,6 @@
 //! Emitter sampling table: the light table the kernel's next-event
 //! estimation draws from (`glow_query`, `lamp_chance` in `light.wgsl`),
-//! and the test-side `Lamps` over world-space triangles.
+//! and the test-side `LampList` over world-space triangles.
 
 use super::instance::Instance;
 use super::kernel::Tri;
@@ -10,13 +10,13 @@ use super::scene::face_mat;
 
 /// Emissive triangles chosen in proportion to their power (area × luminance).
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Lamps {
+pub struct LampList {
     pub ids: Vec<u32>,
     /// Normalised cumulative power, `cdf.last() == 1`.
     pub cdf: Vec<f32>,
 }
 
-impl Lamps {
+impl LampList {
     pub fn of(tris: &[Tri]) -> Self {
         let power = |t: &Tri| {
             let (e1, e2) = ([0, 1, 2].map(|k| t.b[k] - t.a[k]), [0, 1, 2].map(|k| t.c[k] - t.a[k]));

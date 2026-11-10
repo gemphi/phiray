@@ -118,22 +118,22 @@ fn xray_wireframe_shows_the_edge_behind_a_face_and_fades_it() {
     let (scene, cam) = wire_scene();
     let mut tr = Tracer::new(&gpu, &scene, &Atlas::default()).expect("scene");
     tr.set_mode(Mode::Wire);
-    const WS: u32 = 64;
+    const SIDE: u32 = 64;
     let luma = |px: &[u8], x: u32, y: u32| {
-        let i = ((y * WS + x) * 4) as usize;
+        let i = ((y * SIDE + x) * 4) as usize;
         0.2126 * px[i] as f32 + 0.7152 * px[i + 1] as f32 + 0.0722 * px[i + 2] as f32
     };
     // World (1.5, 1.5) is on the wall's diagonal, behind the band.
-    let (x, y) = (WS / 2 + 10, WS / 2 - 10);
+    let (x, y) = (SIDE / 2 + 10, SIDE / 2 - 10);
     let sky = |px: &[u8]| luma(px, 1, y);
-    let (hidden, _) = tr.render(&gpu, cam, WS, WS);
+    let (hidden, _) = tr.render(&gpu, cam, SIDE, SIDE);
     assert!(luma(&hidden, x, y) < sky(&hidden) + 10.0, "X-ray off: the edge behind the band is hidden");
     // Blender's default: X-ray on at alpha 0 — every edge, whole.
-    let (whole, _) = tr.render(&gpu, Camera { see_through: 1.0, ..cam }, WS, WS);
+    let (whole, _) = tr.render(&gpu, Camera { see_through: 1.0, ..cam }, SIDE, SIDE);
     let full = luma(&whole, x, y) - sky(&whole);
     assert!(full > 80.0, "X-ray: the edge behind the band draws ({full})");
     // Alpha 0.5: behind the band it draws at half.
-    let (half, _) = tr.render(&gpu, Camera { see_through: 0.5, ..cam }, WS, WS);
+    let (half, _) = tr.render(&gpu, Camera { see_through: 0.5, ..cam }, SIDE, SIDE);
     let faded = luma(&half, x, y) - sky(&half);
     assert!((faded - full * 0.5).abs() < full * 0.15, "faded to half: {faded} of {full}");
 }

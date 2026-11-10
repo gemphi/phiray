@@ -3,7 +3,7 @@
 //! Objects moved, turned or scaled whole (`reinstance`): each is an
 //! instance of a mesh with a tree of its own over its faces in its own
 //! space, so a new matrix changes nothing under it — the instance table
-//! and the small top tree go up again (`Trees::retlas`), a few kilobytes,
+//! and the small top tree go up again (`Forest::retlas`), a few kilobytes,
 //! and the image starts over. Vertices moved (`repose`: a frame of an
 //! animation, a mesh edited): the vertices go up in place and each mesh's
 //! tree keeps its shape, its bounds refitted over the moved faces
@@ -18,7 +18,7 @@
 
 use super::instance::Instance;
 use super::mesh::Mesh;
-use super::trees::Trees;
+use super::forest::Forest;
 use super::{Scene, Tracer};
 use crate::bvh::Aabb;
 use crate::gpu::{Gpu, GpuArray};
@@ -36,7 +36,7 @@ pub(super) struct Pose {
     pub mats: Vec<Mat>,
     pub meshes: Vec<Mesh>,
     pub insts: Vec<Instance>,
-    pub trees: Trees,
+    pub trees: Forest,
     pub limit: u64,
 }
 
@@ -158,12 +158,12 @@ impl Tracer {
         self.data.write_at(gpu, self.insts[0] as usize, &pose.trees.inst_words(&pose.insts, &pose.meshes))
     }
 
-    /// Lamps: the light table follows the faces — each emissive face's
+    /// LampList: the light table follows the faces — each emissive face's
     /// place under each instance, and its share of the light by area.
     /// `false` when it would reach into the atlas behind it.
     fn relight(&mut self, gpu: &Gpu) -> bool {
         let Some(pose) = self.pose.as_ref().filter(|p| p.glows()) else { return true };
-        let table = super::lamps::table_of(&pose.faces, &pose.pos, &pose.mats, &pose.meshes, &pose.insts);
+        let table = super::lamp::table_of(&pose.faces, &pose.pos, &pose.mats, &pose.meshes, &pose.insts);
         if table.len() > self.split[3] as usize || !self.data.write_front(gpu, &table) {
             return false;
         }

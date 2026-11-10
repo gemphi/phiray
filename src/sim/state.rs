@@ -20,7 +20,7 @@ pub struct Body {
     pub shape: u32,
     /// Angular velocity, world.
     pub w: [f32; 3],
-    /// `Kind` in bits 0..2, then `SLEEPING` and `DEACTIVATES`.
+    /// `Kind` in bits 0..2, then `SLEEPING` and `DEACTIVATION`.
     pub flags: u32,
 }
 
@@ -83,7 +83,7 @@ pub struct Contact {
 /// `Body.flags` bit: the body sleeps until a contact wakes it.
 pub const SLEEPING: u32 = 1 << 2;
 /// `Body.flags` bit: the body may fall asleep (Blender's Deactivation).
-pub const DEACTIVATES: u32 = 1 << 3;
+pub const DEACTIVATION: u32 = 1 << 3;
 const KIND_MASK: u32 = 0b11;
 
 /// Blender's `RigidBodyOb.type` plus the animated case.

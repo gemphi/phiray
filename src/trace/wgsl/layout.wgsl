@@ -30,10 +30,10 @@ const LEAF: u32 = 0x80000000u;
 // A top-tree leaf: its range is instance slots (`inst_order`), not faces.
 const INST: u32 = 0x40000000u;
 // Words per instance record (`Instance::words`).
-const INST_WORDS: u32 = 40u;
+const INST_LEN: u32 = 40u;
 // Words per material record (`Mat`): 32 of its own and three 44-word
 // procedural slots (`procedural.wgsl`).
-const MAT_WORDS: u32 = 164u;
+const MAT_LEN: u32 = 164u;
 const NO_MAT: u32 = 0xffffffffu;
 const NO_TEX: u32 = 0xffffffffu;
 const INF: f32 = 3.0e38;
@@ -49,7 +49,7 @@ fn tf(i: u32) -> f32 { return bitcast<f32>(data[i]); }
 fn mat_at(f: u32) -> u32 { return mat_word(face(f).w); }
 // First word of material `id`: past the light table — the count, each
 // emitter's face, each emitter's instance, each emitter's cdf word.
-fn mat_word(id: u32) -> u32 { return 1u + 3u * data[0] + MAT_WORDS * id; }
+fn mat_word(id: u32) -> u32 { return 1u + 3u * data[0] + MAT_LEN * id; }
 // A material's second lobe (`Mat::second`, `NO_MAT` for none) and its weight.
 fn mat_second(m: u32) -> u32 { return data[m + 30u]; }
 fn mat_mix(m: u32) -> f32 { return tf(m + 31u); }
@@ -59,13 +59,13 @@ fn mat_mix(m: u32) -> f32 { return tf(m + 31u); }
 // the identity, bit 1 when it casts no shadow, bit 2 when it mirrors
 // (`world_ng`); 28..31 its colour and hash, 32..38 its bounding box
 // (`procedural.wgsl`), 38 the mesh it places.
-fn inst_at(i: u32) -> u32 { return p.insts.x + i * INST_WORDS; }
+fn inst_at(i: u32) -> u32 { return p.insts.x + i * INST_LEN; }
 fn inst_row(w: u32) -> vec4<f32> { return vec4<f32>(tf(w), tf(w + 1u), tf(w + 2u), tf(w + 3u)); }
 // Top-tree slot `s` → instance id.
-fn inst_order(s: u32) -> u32 { return data[p.insts.x + p.insts.y * INST_WORDS + s]; }
+fn inst_order(s: u32) -> u32 { return data[p.insts.x + p.insts.y * INST_LEN + s]; }
 // Draw slot `k` → instance id: the instances grouped by mesh, what the
-// raster prepass's instanced draws index (`Trees::draw_order`).
-fn draw_inst(k: u32) -> u32 { return data[p.insts.x + p.insts.y * (INST_WORDS + 1u) + k]; }
+// raster prepass's instanced draws index (`Forest::draw_order`).
+fn draw_inst(k: u32) -> u32 { return data[p.insts.x + p.insts.y * (INST_LEN + 1u) + k]; }
 
 // A normal under the inverse-transpose of an instance's 3 × 3 (`i0..i2`
 // its inverse's rows), unit again; a zero (flat) normal stays zero.

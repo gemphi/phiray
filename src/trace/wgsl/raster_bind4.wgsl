@@ -1,4 +1,4 @@
-// `raster_binds2.wgsl` over four bindings per array (`binds4.wgsl`).
+// `raster_bind2.wgsl` over four bindings per array (`bind4.wgsl`).
 @group(0) @binding(1) var<storage, read> faces0: array<vec4<u32>>;
 @group(0) @binding(2) var<storage, read> faces1: array<vec4<u32>>;
 @group(0) @binding(3) var<storage, read> faces2: array<vec4<u32>>;

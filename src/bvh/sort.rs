@@ -5,7 +5,7 @@
 //! what still comes back is the packing (`Bvh::assemble`), and that is the
 //! one hop left in the LBVH build.
 
-use super::radix::{BINS, Clear, Count, DIGIT, Offset, PASSES, RadixParams, Scatter, Seed};
+use super::radix::{BIN_COUNT, Clear, Count, DIGIT, Offset, PASS_COUNT, RadixParam, Scatter, Seed};
 use super::spread::Spread;
 use crate::gpu::{Gpu, GpuArray, Pass};
 
@@ -24,20 +24,20 @@ pub struct GpuSort {
 impl GpuSort {
     /// Record a sort of `n` keys seeded from a buffer of Morton codes.
     ///
-    /// [`PASSES`] is even, so the ping-pong always ends in `key` — there is
+    /// [`PASS_COUNT`] is even, so the ping-pong always ends in `key` — there is
     /// no "which buffer holds the answer" to get wrong, and the same
     /// recorded list can be replayed after new codes are written.
     pub fn record(gpu: &Gpu, codes: &wgpu::Buffer, n: u32) -> Self {
         let key = GpuArray::<[u32; 2]>::zeroed(gpu, n as usize);
         let alt = GpuArray::<[u32; 2]>::zeroed(gpu, n as usize);
-        let tally = GpuArray::<u32>::zeroed(gpu, (BINS * 2) as usize);
+        let tally = GpuArray::<u32>::zeroed(gpu, (BIN_COUNT * 2) as usize);
         let code = GpuArray::<u32>::zeroed(gpu, n as usize);
         let mut pass = Pass::default();
-        let base = RadixParams::default();
+        let base = RadixParam::default();
         pass.add::<Seed>(gpu, n, base, &[codes, key.buffer()]);
-        pass.add::<Clear>(gpu, BINS * 2, base, &[tally.buffer()]);
-        for d in 0..PASSES {
-            let p = RadixParams { shift: d * DIGIT, ..base };
+        pass.add::<Clear>(gpu, BIN_COUNT * 2, base, &[tally.buffer()]);
+        for d in 0..PASS_COUNT {
+            let p = RadixParam { shift: d * DIGIT, ..base };
             let (src, dst) = if d % 2 == 0 { (&key, &alt) } else { (&alt, &key) };
             pass.add::<Count>(gpu, n, p, &[src.buffer(), tally.buffer()]);
             // One invocation over the 256 bins; `n` is 1 so the grid is one block.
@@ -113,7 +113,7 @@ impl GpuSort {
 #[cfg(test)]
 mod tests {
     use super::super::build::Bvh;
-    use super::super::radix::{BINS, DIGIT, PASSES};
+    use super::super::radix::{BIN_COUNT, DIGIT, PASS_COUNT};
 
     /// The same digit the kernels read, in Rust.
     fn digit(k: [u32; 2], shift: u32) -> u32 {
@@ -127,9 +127,9 @@ mod tests {
     fn model(codes: &[u32]) -> Vec<[u32; 2]> {
         let mut key: Vec<[u32; 2]> = codes.iter().enumerate().map(|(i, &c)| [i as u32, c]).collect();
         let mut alt = key.clone();
-        for d in 0..PASSES {
+        for d in 0..PASS_COUNT {
             let shift = d * DIGIT;
-            let mut cursor = vec![0u32; BINS as usize];
+            let mut cursor = vec![0u32; BIN_COUNT as usize];
             for k in &key {
                 cursor[digit(*k, shift) as usize] += 1;
             }
@@ -176,8 +176,8 @@ mod tests {
     /// `GpuSort::record` says it does.
     #[test]
     fn the_passes_cover_the_key_and_land_back_in_key() {
-        assert_eq!(PASSES * DIGIT, 64, "the key is two u32");
-        assert_eq!(BINS, 1 << DIGIT, "a bin per digit value");
-        assert_eq!(PASSES % 2, 0, "an odd pass count would leave the answer in `alt`");
+        assert_eq!(PASS_COUNT * DIGIT, 64, "the key is two u32");
+        assert_eq!(BIN_COUNT, 1 << DIGIT, "a bin per digit value");
+        assert_eq!(PASS_COUNT % 2, 0, "an odd pass count would leave the answer in `alt`");
     }
 }
