@@ -25,7 +25,7 @@ graph LR
         i_vis["vis: id · barycentrics"]
     end
     subgraph time["across frames"]
-        t_zero["a camera change zeroes the sums<br/>trace/mod.rs:553-559"]
+        t_zero["a camera change zeroes the sums<br/>trace/sample.rs:126-132"]
         t_reproj["reproject the last image by motion and depth"]
         t_clamp["clamp history to the new frame's neighbourhood<br/>HVVR libraries/hvvr/raycaster/gpu_foveated.cu:269-307"]
         t_std["MTLFXTemporalScaler.h:337 · MPSSVGF.h:109"]

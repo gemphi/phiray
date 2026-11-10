@@ -9,22 +9,19 @@ it answers. Nothing here is measured; the speed list is
 
 ```mermaid
 graph LR
-    m_trace["trace<br/>Scene · Tracer · trees · pose · lamps · mat · proc · ibl<br/>Trace · Solid · Wire · Preview · Adapt ·<br/>Taa · Smaa · Fx · Glow · Show · Edge"]
+    m_trace["trace<br/>Scene · Tracer · forest · pose · lamp · mat · proc · ibl<br/>Trace · Solid · Wire · Preview · Adapt ·<br/>Taa · Smaa · Fx · Glow · Show · Edge"]
     m_sim["sim<br/>broad · narrow: gjk, epa, sat ·<br/>contact · world"]
-    m_kernels["kernels<br/>Denoise · Convolve · Bilateral ·<br/>MatMul · Skin"]
     m_mode["mode<br/>Wire · Solid · Preview · Rendered"]
     m_bvh["bvh<br/>sah: Bvh · Node · Aabb<br/>gpu: Morton · radix sort ·<br/>Karras · Refit · Spread"]
     m_gpu["gpu<br/>Gpu · GpuArray · Pass ·<br/>Visibility raster · readback"]
-    m_kernel["kernel<br/>Kernel · Bind · Dispatch · BLOCK"]
+    m_kernel["kernel<br/>Kernel · Bind · Dispatch · BLOCK<br/>Denoise · Convolve · Bilateral ·<br/>MatMul · Skin"]
     m_hot["hot<br/>live WGSL reload"]
     m_trace --> m_bvh
     m_trace --> m_gpu
     m_trace --> m_kernel
-    m_trace --> m_kernels
     m_trace --> m_mode
     m_sim --> m_bvh
-    m_kernels --> m_gpu
-    m_kernels --> m_kernel
+    m_kernel --> m_gpu
     m_bvh --> m_gpu
     m_bvh --> m_kernel
     m_gpu --> m_kernel
@@ -49,7 +46,7 @@ graph LR
     t_trace["trace"]
     t_bvh["bvh"]
     t_gpu["gpu"]
-    t_kernels["kernels"]
+    t_kernel["kernel"]
     m_medium --> m_prim
     m_lod --> m_prim
     m_lod --> m_clock
@@ -61,7 +58,7 @@ graph LR
     m_hw --> t_bvh
     m_clock --> t_gpu
     m_vis --> t_gpu
-    m_recon --> t_kernels
+    m_recon --> t_kernel
     m_sample --> t_trace
     m_surface --> t_trace
     m_prim --> t_trace
@@ -79,7 +76,7 @@ raster prepass); for Preview and Rendered its megakernel fuses 3 to 8.
 ```mermaid
 graph LR
     s1["1 scene compile"] --- h1["Scene · Atlas · Mat<br/>trace/scene.rs"]
-    s2["2 frame update"] --- h2["repose · reinstance · retree<br/>trace/pose.rs · kernels::Skin"]
+    s2["2 frame update"] --- h2["repose · reinstance · retree<br/>trace/pose.rs · kernel::Skin"]
     subgraph mega["Trace megakernel: one dispatch a sample"]
         s3["3 sample set"]
         s4["4 coarse visibility"]
@@ -92,7 +89,7 @@ graph LR
     s4 --- h4["Solid, Wire: raster prepass, gpu::Visibility<br/>Preview, Rendered: none, a ray starts at the root"]
     s5 --- h5["closest hit · any hit"]
     s6 --- h6["bvh.wgsl: trace · trace_blas · tri_t<br/>vis2.wgsl: primary reads the prepass"]
-    s7 --- h7["light.wgsl · shade.wgsl ·<br/>texture.wgsl · procedural.wgsl"]
+    s7 --- h7["brdf.wgsl · light.wgsl · integrate.wgsl ·<br/>shade.wgsl · texture.wgsl · procedural.wgsl"]
     s8 --- h8["running sums a pixel · Adapt"]
     s9["9 reconstruct"] --- h9["Denoise: four a-trous passes · Taa · Smaa"]
     s10["10 present"] --- h10["Fx · Glow · Show · Edge ·<br/>readback to phiber"]
@@ -124,6 +121,6 @@ graph LR
 Folders and order of work: [PLAN.md](PLAN.md) ·
 What each part must do: [SPECS.md](SPECS.md) ·
 Apple's standards and the speed list: [docs/APPLE.md](docs/APPLE.md) ·
-What was ported: [docs/PORTS.md](docs/PORTS.md) ·
+What was ported: [docs/PORT_LEDGER.md](docs/PORT_LEDGER.md) ·
 The references: [reference/README.md](reference/README.md) ·
 What is left to do: [docs/ROADMAP.md](docs/ROADMAP.md)

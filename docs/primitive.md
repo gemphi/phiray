@@ -3,7 +3,7 @@
 ```mermaid
 graph LR
     key["solid: in the code today<br/>dashed: to build"]
-    top["top tree over instances<br/>trace/trees.rs"]
+    top["top tree over instances<br/>trace/forest.rs"]
     inst["Instance<br/>matrix · mesh · material offset"]
     seam["trace_blas, bvh.wgsl<br/>the one place a lower tree is walked"]
     kind{"instance kind"}

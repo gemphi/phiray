@@ -24,7 +24,7 @@ graph LR
 
 ```mermaid
 graph TB
-    key["Tracer::sample_in, trace/mod.rs"]
+    key["Tracer::sample_in, trace/sample.rs"]
     a_cam["Camera changed?<br/>yes: sums zeroed, frame 0"]
     a_slices["the mode's kernel, in slices<br/>the device drained after each, go() asked"]
     subgraph tail["tail, in this order"]

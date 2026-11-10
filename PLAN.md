@@ -11,23 +11,22 @@ step is to measure.
 |---|---|---|
 | `src/lib.rs` | modules and re-exports | 1 |
 | `src/hot.rs` | live WGSL reload | 1 |
-| `src/kernel.rs` | `Kernel`, `Bind`, `Dispatch`, `BLOCK` | 1 |
+| `src/kernel/` | `Kernel`, `Bind`, `Dispatch`, `BLOCK`; Denoise, Convolve, Bilateral, MatMul, Skin | 4 + 2 WGSL |
 | `src/mode.rs` | `Mode`: Wire, Solid, Preview, Rendered | 1 |
-| `src/gpu/` | `Gpu`, `GpuArray`, `Pass`, `Visibility`, readback, adapters | 7 |
+| `src/gpu/` | `Gpu`, `GpuArray`, `Pass`, `Clock`, `Visibility`, readback, the adapter list | 8 |
 | `src/bvh/` | the SAH tree; the GPU tree: Morton, radix sort, Karras, Refit | 11 |
-| `src/kernels/` | Denoise, Convolve, Bilateral, MatMul, Skin | 4 + 2 WGSL |
-| `src/trace/` | `Scene`, `Tracer`, trees, pose, lamps, materials, procedurals | 20 |
-| `src/trace/wgsl/` | every tracing and display kernel | 38 WGSL |
-| `src/trace/{ibl,scene,smaa,trees}/` | parts of the above | 5 |
+| `src/trace/` | `Scene`, `Tracer` (built, sampled, read: `build.rs`, `sample.rs`, `read.rs`), camera, forest, pose, lamp, light, atlas, materials, procedurals | 26 |
+| `src/trace/wgsl/` | every tracing and display kernel | 40 WGSL |
+| `src/trace/{forest,ibl,scene,smaa}/` | parts of the above | 5 |
 | `src/sim/` | rigid bodies: broad phase, GJK, EPA, SAT, contact | 16 |
-| `docs/` | `APPLE.md`, `PORTS.md`, `ROADMAP.md`, one page a subject | - |
+| `docs/` | `APPLE.md`, `PORT_LEDGER.md`, `ROADMAP.md`, one page a subject | - |
 | `reference/` | 32 Meta repositories, Warp, the index | - |
 
 ## The folders to add (suggested)
 
 | Path | Holds | Read from | Order |
 |---|---|---|---|
-| `src/gpu/clock.rs` | GPU time a dispatch by timestamp query; a hard sync when queries are missing | `MTLCounters.h:43,166` | 1 |
+| `src/gpu/clock.rs` | GPU time a dispatch by timestamp query; a hard sync when queries are missing (done) | `MTLCounters.h:43,166` | 1 |
 | `src/trace/wgsl/count.wgsl` | counters a pixel: node visits, triangle tests, rays | - | 1 |
 | `src/trace/wgsl/bvh.wgsl` | the two inner-loop fixes | `MTLAccelerationStructure.h:144` | 2 |
 | `src/trace/adapt.rs` | adaptive sampling in the viewport, dispatch over open pixels | `MTLRasterizationRate.h:244`, `MTLComputeCommandEncoder.h:236` | 3 |
@@ -48,9 +47,11 @@ step is to measure.
 | `src/gpu/mod.rs` | for the web: the device opened through the async door that has no caller today; a constructor that adopts a device and queue another crate already holds | phikit `docs/web.md`, blockers 1 and 3 | with 3 |
 | `src/gpu/present.rs` | the traced image handed on as a texture, with no readback: what the web needs and what the desktop's present path wants | `CAMetalLayer.h:54`; phikit `docs/web.md` | with 3 |
 
-Names are singular: files, folders and types. The plural names in the tree
-above (`kernels`, `trees`, `lamps`) are being made singular in a separate
-change, so this table will trail it.
+Names are singular: files, folders and types. A name for many things is a
+collective noun (`Forest`, `Histogram`), a `...List` (`LampList`,
+`GpuAdapterList`, `BIND_LIST`), or failing both a `P` prefix; counts end in
+`_COUNT`, caps start `MAX_`, lengths in words end in `_LEN`. `tests/`,
+`examples/` and `benches/` keep Cargo's names.
 
 Suggested, not decided: `src/trace/wgsl/` holds 38 files in one folder. As
 kernels are added, group them by stage (`walk/`, `shade/`, `display/`,

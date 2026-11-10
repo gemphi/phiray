@@ -5,7 +5,7 @@ graph LR
     key["today, read from the code"]
     a_scene["Scene<br/>meshes, instances"]
     a_sah["bvh/sah.rs<br/>binned SAH, one tree a mesh, on the CPU<br/>right child = left + 1"]
-    a_top["trace/trees.rs<br/>SAH top tree over instances"]
+    a_top["trace/forest.rs<br/>SAH top tree over instances"]
     a_node["Node, 32 bytes<br/>holds its own box"]
     a_up["GpuArray&lt;Node&gt;<br/>split over 2 or 4 bindings"]
     a_walk["bvh.wgsl<br/>trace: top tree · trace_blas: a mesh's tree<br/>two 32-word stacks"]
