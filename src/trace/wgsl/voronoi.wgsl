@@ -17,7 +17,7 @@ const VORONOI_MANHATTAN: u32 = 1u;
 const VORONOI_CHEBYCHEV: u32 = 2u;
 const VORONOI_MINKOWSKI: u32 = 3u;
 
-// `VoronoiParam`, the node's inputs after its clamps.
+// Blender's `VoronoiParams`, the node's inputs after its clamps.
 struct VParam {
     feature: u32,
     metric: u32,
