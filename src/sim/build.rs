@@ -7,7 +7,7 @@
 use super::math::*;
 use super::mesh::MeshCollider;
 use super::shape;
-use super::state::{Body, BodyConst, BodyPrev, DEACTIVATES, Kind, Shape};
+use super::state::{Body, BodyConst, BodyPrev, DEACTIVATION, Kind, Shape};
 use super::world::World;
 
 /// What `World::add_body` takes.
@@ -104,7 +104,7 @@ impl World {
         let inv_inertia = map3(|k| if movable && inertia[k] > 0.0 { 1.0 / inertia[k] } else { 0.0 });
         let mut flags = d.kind as u32;
         if d.sleep.is_some() {
-            flags |= DEACTIVATES;
+            flags |= DEACTIVATION;
         }
         let mut body = Body { x: d.x, inv_mass, q: q_norm(d.q), v: d.v, shape: d.shape, w: d.w, flags };
         body.set_asleep(d.asleep && d.sleep.is_some());

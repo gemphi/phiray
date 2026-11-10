@@ -6,7 +6,7 @@
 //
 // EEVEE takes one such ray per frame and lets its sixteen viewport samples
 // average them. This kernel is one dispatch and the same frame every time
-// (§22), so it cannot accumulate: it takes `SHADOW_TAPS` rays at once, over
+// (§22), so it cannot accumulate: it takes `SHADOW_TAP_COUNT` rays at once, over
 // the Hammersley set EEVEE itself samples its lookup tables with
 // (`hammersley_2d`), and averages their visibility. A light whose shape is
 // a point — Blender's Shadow Soft Size at 0, which EEVEE also draws hard —
@@ -16,7 +16,7 @@
 // steps through the shadow map (`shadow_ray_count`, `shadow_step_count`);
 // eight is what a penumbra needs to read as a gradient rather than as
 // eight hard edges, at eight times the shadow cost of batch 108's kernel.
-const SHADOW_TAPS: u32 = 8u;
+const SHADOW_TAP_COUNT: u32 = 8u;
 // Under this, a light's shape is a point and its shadow is hard.
 const SHADOW_HARD: f32 = 1e-5;
 
@@ -58,7 +58,7 @@ fn light_sphere_disk_radius(radius: f32, dist: f32) -> f32 {
 }
 
 // How much of lamp `li` reaches `pos`, in 0 ..= 1: the mean of
-// `SHADOW_TAPS` rays aimed over its shape. `l` is the direction to its
+// `SHADOW_TAP_COUNT` rays aimed over its shape. `l` is the direction to its
 // centre and `dist` how far that is (`INF` for a sun).
 fn lamp_visible(pos: vec3<f32>, li: Light, l: vec3<f32>, dist: f32) -> f32 {
     // A Sun's shape is an angle: the ray goes inside that cone
@@ -68,11 +68,11 @@ fn lamp_visible(pos: vec3<f32>, li: Light, l: vec3<f32>, dist: f32) -> f32 {
         if (half_angle < SHADOW_HARD) { return visible(pos, l, INF); }
         let cos_angle = cos(min(half_angle, PI * 0.5));
         var sum = 0.0;
-        for (var k = 0u; k < SHADOW_TAPS; k++) {
-            let cone = sample_uniform_cone(hammersley_2d(k, SHADOW_TAPS), cos_angle);
+        for (var k = 0u; k < SHADOW_TAP_COUNT; k++) {
+            let cone = sample_uniform_cone(hammersley_2d(k, SHADOW_TAP_COUNT), cos_angle);
             sum += visible(pos, normalize(l * cone.z + onb(l, cone.x, cone.y)), INF);
         }
-        return sum / f32(SHADOW_TAPS);
+        return sum / f32(SHADOW_TAP_COUNT);
     }
     if (li.size < SHADOW_HARD) { return visible(pos, l, dist); }
     // An Area light's taps spread over its own shape in its own plane
@@ -86,25 +86,25 @@ fn lamp_visible(pos: vec3<f32>, li: Light, l: vec3<f32>, dist: f32) -> f32 {
         let round = li.shape == AREA_DISK || li.shape == AREA_ELLIPSE;
         let up = cross(li.dir, li.right);
         var sum = 0.0;
-        for (var k = 0u; k < SHADOW_TAPS; k++) {
-            let rand = hammersley_2d(k, SHADOW_TAPS);
+        for (var k = 0u; k < SHADOW_TAP_COUNT; k++) {
+            let rand = hammersley_2d(k, SHADOW_TAP_COUNT);
             let on_shape = select(rand * 2.0 - 1.0, sample_disk(rand), round) * half;
             let to = li.pos + li.right * on_shape.x + up * on_shape.y - pos;
             sum += visible(pos, normalize(to), length(to) * 0.999);
         }
-        return sum / f32(SHADOW_TAPS);
+        return sum / f32(SHADOW_TAP_COUNT);
     }
     // A Point or Spot aims at a disk of its Radius turned to face the
     // surface (`shadow_ray_generate_punctual`): its shape is a sphere, so
     // the disk takes the radius that spans the same angle.
     let radius = light_sphere_disk_radius(li.size, dist);
     var sum = 0.0;
-    for (var k = 0u; k < SHADOW_TAPS; k++) {
-        let disk = sample_disk(hammersley_2d(k, SHADOW_TAPS)) * radius;
+    for (var k = 0u; k < SHADOW_TAP_COUNT; k++) {
+        let disk = sample_disk(hammersley_2d(k, SHADOW_TAP_COUNT)) * radius;
         let to = li.pos + onb(l, disk.x, disk.y) - pos;
         sum += visible(pos, normalize(to), length(to) * 0.999);
     }
-    return sum / f32(SHADOW_TAPS);
+    return sum / f32(SHADOW_TAP_COUNT);
 }
 
 // The three-point rig's key and rim, which have no light record of their
@@ -112,9 +112,9 @@ fn lamp_visible(pos: vec3<f32>, li: Light, l: vec3<f32>, dist: f32) -> f32 {
 fn rig_visible(pos: vec3<f32>, l: vec3<f32>, half_angle: f32) -> f32 {
     let cos_angle = cos(half_angle);
     var sum = 0.0;
-    for (var k = 0u; k < SHADOW_TAPS; k++) {
-        let cone = sample_uniform_cone(hammersley_2d(k, SHADOW_TAPS), cos_angle);
+    for (var k = 0u; k < SHADOW_TAP_COUNT; k++) {
+        let cone = sample_uniform_cone(hammersley_2d(k, SHADOW_TAP_COUNT), cos_angle);
         sum += visible(pos, normalize(l * cone.z + onb(l, cone.x, cone.y)), INF);
     }
-    return sum / f32(SHADOW_TAPS);
+    return sum / f32(SHADOW_TAP_COUNT);
 }

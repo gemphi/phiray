@@ -16,7 +16,7 @@ pub mod readback;
 /// thread-local in a browser (`shared.rs` says why).
 mod shared;
 
-pub use adapter::{GpuAdapter, GpuAdapters};
+pub use adapter::{GpuAdapter, GpuAdapterList};
 pub use array::GpuArray;
 pub use clock::{Clock, Time};
 pub use pass::Pass;
@@ -54,7 +54,7 @@ static PATIENCE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// (see [`Gpu::waited`]). Process-wide and monotonic: a caller measuring
 /// one render takes the pair before and after and subtracts.
 static WAITED_NS: AtomicU64 = AtomicU64::new(0);
-static WAITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static WAIT_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Raise the readback budget for as long as this value lives, then put the
 /// previous one back — so a final render may wait minutes without the
@@ -84,7 +84,7 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    /// Which GPU this is (name, backend, driver) — reported by `examples/limits`.
+    /// Which GPU this is (name, backend, driver) — reported by `examples/limit`.
     pub info: wgpu::AdapterInfo,
     /// The adapter as the Preferences list it.
     pub adapter: GpuAdapter,
@@ -152,7 +152,7 @@ impl Gpu {
     /// best), and make it the shared one; what it opened on.
     #[cfg(not(target_family = "wasm"))]
     pub fn switch(preferred: Option<String>) -> Option<GpuAdapter> {
-        GpuAdapters::prefer(preferred);
+        GpuAdapterList::prefer(preferred);
         let gpu = Self::new();
         let picked = gpu.as_ref().map(|g| g.adapter.clone());
         shared::with(|slot| {
@@ -168,7 +168,7 @@ impl Gpu {
     /// open device stays.
     #[cfg(target_family = "wasm")]
     pub fn switch(preferred: Option<String>) -> Option<GpuAdapter> {
-        GpuAdapters::prefer(preferred);
+        GpuAdapterList::prefer(preferred);
         Self::in_use()
     }
 
@@ -228,7 +228,7 @@ impl Gpu {
     /// native callers should keep using `Gpu::shared`, which opens once
     /// per process and hands the same device to every renderer mode.
     pub async fn open() -> Option<Self> {
-        let (adapter, picked) = GpuAdapters::chosen().await?;
+        let (adapter, picked) = GpuAdapterList::chosen().await?;
         // Everything the adapter offers (kernels need > 4 storage buffers).
         let limits = adapter.limits();
         // Timestamps only where the adapter offers them: asking for a
@@ -264,7 +264,7 @@ impl Gpu {
     /// That price was never measured, so nobody knew whether 64 slices cost
     /// 1% or 40%. Two relaxed atomics; they are not on the GPU's path.
     pub fn waited() -> (u64, u32) {
-        (WAITED_NS.load(Ordering::Relaxed), WAITS.load(Ordering::Relaxed))
+        (WAITED_NS.load(Ordering::Relaxed), WAIT_COUNT.load(Ordering::Relaxed))
     }
 
     /// Block until queued work is done. Never returns if the device is
@@ -273,7 +273,7 @@ impl Gpu {
         let at = web_time::Instant::now();
         let _done = self.wait_counted();
         WAITED_NS.fetch_add(at.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64, Ordering::Relaxed);
-        WAITS.fetch_add(1, Ordering::Relaxed);
+        WAIT_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 
     fn wait_counted(&self) {

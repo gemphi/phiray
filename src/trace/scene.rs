@@ -200,11 +200,11 @@ impl Scene {
     /// `[lamp count, face ids…, instance ids…, cdf bits…, materials…]`
     /// (see `wgsl/layout.wgsl`).
     pub fn table(&self) -> Vec<u32> {
-        super::lamps::table_of(&self.faces, &self.pos, &self.mats, &self.placed(), &self.insts)
+        super::lamp::table_of(&self.faces, &self.pos, &self.mats, &self.placed(), &self.insts)
     }
 }
 
 #[cfg(test)]
-mod tests;
+mod test;
 
 mod add;

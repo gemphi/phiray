@@ -36,7 +36,7 @@ pub fn camera() -> Camera {
         envmap: 1,
         env_cdf: 2,
         env_hidden: 1,
-        preview: [3, 4, phiray::trace::ibl::LEVELS, 0],
+        preview: [3, 4, phiray::trace::ibl::LEVEL_COUNT, 0],
         ..Default::default()
     }
 }

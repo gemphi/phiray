@@ -1,5 +1,5 @@
 // The visibility prepass's bindings (`raster.wgsl`): the faces, vertices
-// and data of `binds2.wgsl`, read-only — a vertex stage may not bind the
+// and data of `bind2.wgsl`, read-only — a vertex stage may not bind the
 // image — at bindings 1..5.
 @group(0) @binding(1) var<storage, read> faces0: array<vec4<u32>>;
 @group(0) @binding(2) var<storage, read> faces1: array<vec4<u32>>;

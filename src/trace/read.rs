@@ -52,20 +52,20 @@ impl Tracer {
     /// Sampling is on, and 33n..34n how many of a pixel's samples met
     /// nothing (`emit`'s `missed`), which the light is not averaged over.
     /// The one word after the image is the list's length (`gather.wgsl`) —
-    /// which is why the buffer is `PX_WORDS · n + 1`.
-    pub(crate) const PX_WORDS: usize = 34;
+    /// which is why the buffer is `PX_LEN · n + 1`.
+    pub(crate) const PX_LEN: usize = 34;
 
     /// The most pixels one image may hold on `gpu`. The image is one
-    /// binding of `PX_WORDS` words a pixel, and a device caps a binding —
+    /// binding of `PX_LEN` words a pixel, and a device caps a binding —
     /// at 128 MiB on many, about 1.4 million pixels — past which creating
     /// the pass is a validation error that ends the render thread.
     pub fn max_pixels(gpu: &Gpu) -> u64 {
-        gpu.max_binding().saturating_sub(4) / (Self::PX_WORDS as u64 * 4)
+        gpu.max_binding().saturating_sub(4) / (Self::PX_LEN as u64 * 4)
     }
 
     /// Denoise what has been traced so far, replacing the displayed image.
     ///
-    /// Five a-trous passes at widening tap spacing (`kernels/denoise.rs`),
+    /// Five a-trous passes at widening tap spacing (`kernel/denoise.rs`),
     /// guided by the albedo, normal and depth the tracer recorded for each
     /// pixel's first hit. Call it once a render has settled; `pixels` then
     /// returns the filtered image. Tracing another sample overwrites it, so
@@ -83,7 +83,7 @@ impl Tracer {
     }
 
     fn denoise_with(&mut self, gpu: &Gpu, keep: bool) {
-        use crate::kernels::{Denoise, DenoiseParams};
+        use crate::kernel::{Denoise, DenoiseParam};
         let (w, h) = self.size;
         let n = w * h;
         let (Some(px), Some(cam)) = (self.px.as_ref(), self.last) else { return };
@@ -93,7 +93,7 @@ impl Tracer {
             return;
         }
         let d = Dispatch::new(n);
-        let base = DenoiseParams {
+        let base = DenoiseParam {
             n,
             groups_x: d.x,
             w,
@@ -112,7 +112,7 @@ impl Tracer {
         // Four passes, a reach of 30 pixels: a fifth reached 62 and blurred across
         // whole walls for noise the first four had already taken out.
         for (i, step) in [1u32, 2, 4, 8].into_iter().enumerate() {
-            let params = DenoiseParams { step, round: i as u32, last: u32::from(step == 8), ..base };
+            let params = DenoiseParam { step, round: i as u32, last: u32::from(step == 8), ..base };
             pass.add::<Denoise>(gpu, n, params, &[px.buffer()]);
         }
         pass.run(gpu);
@@ -139,7 +139,7 @@ impl Tracer {
         }
         // The glare scratch: two rgb buffers a pixel (A at 0, B at 3n),
         // ping-ponged by the separable blur. Its own binding, so the
-        // packed image buffer (`PX_WORDS`) is untouched.
+        // packed image buffer (`PX_LEN`) is untouched.
         let scratch = GpuArray::<u32>::zeroed(gpu, 2 * 3 * n);
         let d = Dispatch::new(n as u32);
         let mut pass = Pass::default();

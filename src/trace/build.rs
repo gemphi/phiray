@@ -2,7 +2,7 @@
 //! split over as many bindings as each needs, and the kernels compiled ahead
 //! of the first frame of a mode (`Tracer::warm`).
 use super::{Atlas, Preview, Preview4, Scene, Solid, Solid4, Trace, Trace4, Tracer, Tri, Wire, Wire4};
-use super::{blue_noise, instance, pose, smaa, taa, trees};
+use super::{blue_noise, forest, instance, pose, smaa, taa};
 use crate::gpu::{Clock, Gpu, GpuArray, Pass, Time};
 use crate::mode::Mode;
 
@@ -74,7 +74,7 @@ impl Tracer {
 
     /// Each instance's tree is built on the CPU (all cores) over its faces
     /// in its own space, and a top tree over the instances as placed
-    /// (`trees.rs`); nodes, faces and vertices are each split over `chunks`
+    /// (`forest.rs`); nodes, faces and vertices are each split over `chunks`
     /// (2 or 4) bindings, so a scene may use `chunks ×` the limit per array
     /// (as Blender's GPU backends chunk large buffers).
     /// Why this scene will not build on a device with this binding limit,
@@ -130,7 +130,7 @@ impl Tracer {
     /// builder itself lays out below.
     fn data_words(scene: &Scene) -> u64 {
         let colors = if scene.colors.is_empty() { 0 } else { scene.pos.len() as u64 };
-        scene.table().len() as u64 + scene.atlas.words().len() as u64 + scene.insts.len() as u64 * (instance::INSTANCE_WORDS as u64 + 2) + colors
+        scene.table().len() as u64 + scene.atlas.words().len() as u64 + scene.insts.len() as u64 * (instance::INSTANCE_LEN as u64 + 2) + colors
     }
 
     pub fn with_chunks(gpu: &Gpu, mut scene: Scene, limit: u64, chunks: usize) -> Option<Self> {
@@ -142,7 +142,7 @@ impl Tracer {
             return None;
         }
         scene.seal();
-        let (trees, order) = trees::Trees::build(&scene);
+        let (trees, order) = forest::Forest::build(&scene);
         // Faces in leaf order, so leaves index faces directly.
         scene.reorder(&order);
         let extent = trees.extent();
@@ -186,7 +186,7 @@ impl Tracer {
             vis: None,
             blank: GpuArray::zeroed(gpu, 4),
             noise: GpuArray::from(gpu, &blue_noise::BlueNoise::words()),
-            smaa: GpuArray::from(gpu, &smaa::SmaaTables::words()),
+            smaa: GpuArray::from(gpu, &smaa::SmaaTableList::words()),
             class: GpuArray::zeroed(gpu, pose.insts.len().max(1)),
             classes: vec![0; pose.insts.len()],
             reshow: false,
@@ -206,8 +206,8 @@ impl Tracer {
             size: (0, 0),
             extent,
             mode: Mode::Rendered,
-            target: Self::SAMPLES,
-            aa: taa::SAMPLES,
+            target: Self::SAMPLE_COUNT,
+            aa: taa::SAMPLE_COUNT,
             pose: Some(pose),
             // Off until the render path resolves the scene's rows
             // (`Tracer::set_adaptive`).

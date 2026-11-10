@@ -10,16 +10,15 @@ pub mod gpu;
 /// (`PHIRAY_SHADERS`, off unless set).
 pub mod hot;
 pub mod kernel;
-pub mod kernels;
 pub mod mode;
 pub mod sim;
 pub mod trace;
 
 pub use bvh::{Aabb, Bvh, GpuBvh, Half, Node};
-pub use gpu::{AsyncReadback, Gpu, GpuAdapter, GpuAdapters, GpuArray, Pass, PatienceFor, ReadbackBuffer};
+pub use gpu::{AsyncReadback, Gpu, GpuAdapter, GpuAdapterList, GpuArray, Pass, PatienceFor, ReadbackBuffer};
 pub use kernel::{BLOCK, Bind, Dispatch, Kernel};
 pub use mode::Mode;
-pub use trace::{AREA_DISK, AREA_ELLIPSE, AREA_RECT, AREA_SQUARE, Atlas, Camera, Instance, LIGHTS, Lamps, Light, Mat, Mesh, NO_MAT, NO_TEX, PROC_NORMALIZE, PixelFilter, Proc, Scene, Srgb, Tracer, Tri, View, Look};
+pub use trace::{AREA_DISK, AREA_ELLIPSE, AREA_RECT, AREA_SQUARE, Atlas, Camera, Instance, MAX_LIGHT, LampList, Light, Mat, Mesh, NO_MAT, NO_TEX, PROC_NORMALIZE, PixelFilter, Proc, Scene, Srgb, Tracer, Tri, View, Look};
 pub use trace::proc;
 pub use trace::fresnel;
 pub use trace::tri;

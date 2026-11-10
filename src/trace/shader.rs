@@ -37,8 +37,8 @@ pub struct Adapt;
 
 impl Kernel for Adapt {
     const NAME: &'static str = "adapt";
-    const BINDS: &'static [Bind] = &[Bind::Write];
-    type Params = Camera;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write];
+    type Param = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/adapt.wgsl"));
 }
 
@@ -51,8 +51,8 @@ pub struct AdaptDilate;
 impl Kernel for AdaptDilate {
     const NAME: &'static str = "adapt_dilate";
     const ENTRY: &'static str = "dilate";
-    const BINDS: &'static [Bind] = &[Bind::Write];
-    type Params = Camera;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write];
+    type Param = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/adapt.wgsl"));
 }
 
@@ -63,8 +63,8 @@ pub struct AdaptClear;
 impl Kernel for AdaptClear {
     const NAME: &'static str = "adapt_clear";
     const ENTRY: &'static str = "gather_clear";
-    const BINDS: &'static [Bind] = &[Bind::Write];
-    type Params = Camera;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write];
+    type Param = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/gather.wgsl"));
 }
 
@@ -75,8 +75,8 @@ pub struct AdaptGather;
 impl Kernel for AdaptGather {
     const NAME: &'static str = "adapt_gather";
     const ENTRY: &'static str = "gather";
-    const BINDS: &'static [Bind] = &[Bind::Write];
-    type Params = Camera;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write];
+    type Param = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/gather.wgsl"));
 }
 
@@ -87,8 +87,8 @@ pub struct Taa;
 
 impl Kernel for Taa {
     const NAME: &'static str = "taa";
-    const BINDS: &'static [Bind] = &[Bind::Write];
-    type Params = Camera;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write];
+    type Param = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/taa.wgsl"));
 }
 
@@ -100,8 +100,8 @@ pub struct Smaa;
 
 impl Kernel for Smaa {
     const NAME: &'static str = "smaa";
-    const BINDS: &'static [Bind] = &[Bind::Write, Bind::Read];
-    type Params = Camera;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write, Bind::Read];
+    type Param = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/smaa_lib.wgsl"), include_str!("wgsl/smaa.wgsl"));
 }
 
@@ -114,10 +114,10 @@ pub struct Fx;
 
 impl Kernel for Fx {
     const NAME: &'static str = "fx";
-    const BINDS: &'static [Bind] = &[Bind::Write, Bind::Read];
-    type Params = Camera;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write, Bind::Read];
+    type Param = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/fx.wgsl"), include_str!("wgsl/dof.wgsl"));
-    const FILES: &'static [&'static str] = &["camera.wgsl", "view.wgsl", "fx.wgsl", "dof.wgsl"];
+    const FILE_LIST: &'static [&'static str] = &["camera.wgsl", "view.wgsl", "fx.wgsl", "dof.wgsl"];
 }
 
 /// Bloom / Glare (`glow.wgsl`): Blender's Eevee Bloom and the compositor's
@@ -129,10 +129,10 @@ pub struct Glow;
 
 impl Kernel for Glow {
     const NAME: &'static str = "glow";
-    const BINDS: &'static [Bind] = &[Bind::Write, Bind::Write];
-    type Params = Camera;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write, Bind::Write];
+    type Param = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/glow.wgsl"));
-    const FILES: &'static [&'static str] = &["camera.wgsl", "view.wgsl", "glow.wgsl"];
+    const FILE_LIST: &'static [&'static str] = &["camera.wgsl", "view.wgsl", "glow.wgsl"];
 }
 
 /// The display step alone (`show.wgsl`): the view transform and the grid
@@ -143,10 +143,10 @@ pub struct Show;
 
 impl Kernel for Show {
     const NAME: &'static str = "show";
-    const BINDS: &'static [Bind] = &[Bind::Write];
-    type Params = Camera;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write];
+    type Param = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/show.wgsl"));
-    const FILES: &'static [&'static str] = &["camera.wgsl", "view.wgsl", "show.wgsl"];
+    const FILE_LIST: &'static [&'static str] = &["camera.wgsl", "view.wgsl", "show.wgsl"];
 }
 
 /// The selection outline (`outline.wgsl`): the id edges of the selected
@@ -157,8 +157,8 @@ pub struct Edge;
 
 impl Kernel for Edge {
     const NAME: &'static str = "edge";
-    const BINDS: &'static [Bind] = &[Bind::Write, Bind::Read];
-    type Params = Camera;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write, Bind::Read];
+    type Param = Camera;
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/outline.wgsl"));
 }
 
@@ -237,10 +237,10 @@ macro_rules! direct_wgsl {
     };
 }
 
-const TRACE_FILES_2: &[&str] = &[
+const TRACE_FILE_LIST_2: &[&str] = &[
     "camera.wgsl",
     "layout.wgsl",
-    "binds2.wgsl",
+    "bind2.wgsl",
     "texture.wgsl",
     "noise.wgsl",
     "hash.wgsl",
@@ -259,10 +259,10 @@ const TRACE_FILES_2: &[&str] = &[
     "shade.wgsl",
 ];
 
-const TRACE_FILES_4: &[&str] = &[
+const TRACE_FILE_LIST_4: &[&str] = &[
     "camera.wgsl",
     "layout.wgsl",
-    "binds4.wgsl",
+    "bind4.wgsl",
     "texture.wgsl",
     "noise.wgsl",
     "hash.wgsl",
@@ -283,60 +283,60 @@ const TRACE_FILES_4: &[&str] = &[
 
 impl Kernel for Trace {
     const NAME: &'static str = "trace";
-    const BINDS: &'static [Bind] = &[R, R, R, R, R, R, R, Bind::Write];
-    type Params = Camera;
-    const WGSL: &'static str = trace_wgsl!("wgsl/binds2.wgsl");
-    const FILES: &'static [&'static str] = TRACE_FILES_2;
+    const BIND_LIST: &'static [Bind] = &[R, R, R, R, R, R, R, Bind::Write];
+    type Param = Camera;
+    const WGSL: &'static str = trace_wgsl!("wgsl/bind2.wgsl");
+    const FILE_LIST: &'static [&'static str] = TRACE_FILE_LIST_2;
 }
 
 impl Kernel for Trace4 {
     const NAME: &'static str = "trace4";
-    const BINDS: &'static [Bind] = &[R, R, R, R, R, R, R, R, R, R, R, R, R, Bind::Write];
-    type Params = Camera;
-    const WGSL: &'static str = trace_wgsl!("wgsl/binds4.wgsl");
-    const FILES: &'static [&'static str] = TRACE_FILES_4;
+    const BIND_LIST: &'static [Bind] = &[R, R, R, R, R, R, R, R, R, R, R, R, R, Bind::Write];
+    type Param = Camera;
+    const WGSL: &'static str = trace_wgsl!("wgsl/bind4.wgsl");
+    const FILE_LIST: &'static [&'static str] = TRACE_FILE_LIST_4;
 }
 
 impl Kernel for Solid {
     const NAME: &'static str = "solid";
-    const BINDS: &'static [Bind] = &[R, R, R, R, R, R, R, Bind::Write, R];
-    type Params = Camera;
-    const WGSL: &'static str = direct_wgsl!("wgsl/binds2.wgsl", "wgsl/vis2.wgsl", "wgsl/solid.wgsl");
+    const BIND_LIST: &'static [Bind] = &[R, R, R, R, R, R, R, Bind::Write, R];
+    type Param = Camera;
+    const WGSL: &'static str = direct_wgsl!("wgsl/bind2.wgsl", "wgsl/vis2.wgsl", "wgsl/solid.wgsl");
 }
 
 impl Kernel for Solid4 {
     const NAME: &'static str = "solid4";
-    const BINDS: &'static [Bind] = &[R, R, R, R, R, R, R, R, R, R, R, R, R, Bind::Write, R];
-    type Params = Camera;
-    const WGSL: &'static str = direct_wgsl!("wgsl/binds4.wgsl", "wgsl/vis4.wgsl", "wgsl/solid.wgsl");
+    const BIND_LIST: &'static [Bind] = &[R, R, R, R, R, R, R, R, R, R, R, R, R, Bind::Write, R];
+    type Param = Camera;
+    const WGSL: &'static str = direct_wgsl!("wgsl/bind4.wgsl", "wgsl/vis4.wgsl", "wgsl/solid.wgsl");
 }
 
 impl Kernel for Wire {
     const NAME: &'static str = "wire";
-    const BINDS: &'static [Bind] = &[R, R, R, R, R, R, R, Bind::Write, R];
-    type Params = Camera;
-    const WGSL: &'static str = direct_wgsl!("wgsl/binds2.wgsl", "wgsl/vis2.wgsl", "wgsl/wire.wgsl");
+    const BIND_LIST: &'static [Bind] = &[R, R, R, R, R, R, R, Bind::Write, R];
+    type Param = Camera;
+    const WGSL: &'static str = direct_wgsl!("wgsl/bind2.wgsl", "wgsl/vis2.wgsl", "wgsl/wire.wgsl");
 }
 
 impl Kernel for Wire4 {
     const NAME: &'static str = "wire4";
-    const BINDS: &'static [Bind] = &[R, R, R, R, R, R, R, R, R, R, R, R, R, Bind::Write, R];
-    type Params = Camera;
-    const WGSL: &'static str = direct_wgsl!("wgsl/binds4.wgsl", "wgsl/vis4.wgsl", "wgsl/wire.wgsl");
+    const BIND_LIST: &'static [Bind] = &[R, R, R, R, R, R, R, R, R, R, R, R, R, Bind::Write, R];
+    type Param = Camera;
+    const WGSL: &'static str = direct_wgsl!("wgsl/bind4.wgsl", "wgsl/vis4.wgsl", "wgsl/wire.wgsl");
 }
 
 impl Kernel for Preview {
     const NAME: &'static str = "preview";
-    const BINDS: &'static [Bind] = &[R, R, R, R, R, R, R, Bind::Write];
-    type Params = Camera;
-    const WGSL: &'static str = preview_wgsl!("wgsl/binds2.wgsl");
+    const BIND_LIST: &'static [Bind] = &[R, R, R, R, R, R, R, Bind::Write];
+    type Param = Camera;
+    const WGSL: &'static str = preview_wgsl!("wgsl/bind2.wgsl");
 }
 
 impl Kernel for Preview4 {
     const NAME: &'static str = "preview4";
-    const BINDS: &'static [Bind] = &[R, R, R, R, R, R, R, R, R, R, R, R, R, Bind::Write];
-    type Params = Camera;
-    const WGSL: &'static str = preview_wgsl!("wgsl/binds4.wgsl");
+    const BIND_LIST: &'static [Bind] = &[R, R, R, R, R, R, R, R, R, R, R, R, R, Bind::Write];
+    type Param = Camera;
+    const WGSL: &'static str = preview_wgsl!("wgsl/bind4.wgsl");
 }
 
 /// The visibility prepass (`raster.wgsl`): a render pipeline, not a kernel,
@@ -345,8 +345,8 @@ impl Kernel for Preview4 {
 pub struct Raster;
 
 impl Raster {
-    pub const WGSL2: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/layout.wgsl"), include_str!("wgsl/raster_binds2.wgsl"), include_str!("wgsl/raster.wgsl"));
-    pub const WGSL4: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/layout.wgsl"), include_str!("wgsl/raster_binds4.wgsl"), include_str!("wgsl/raster.wgsl"));
+    pub const WGSL2: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/layout.wgsl"), include_str!("wgsl/raster_bind2.wgsl"), include_str!("wgsl/raster.wgsl"));
+    pub const WGSL4: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/layout.wgsl"), include_str!("wgsl/raster_bind4.wgsl"), include_str!("wgsl/raster.wgsl"));
 
     /// The source for `chunks` bindings per array, and its cache key.
     pub fn source(chunks: usize) -> (&'static str, u64) {

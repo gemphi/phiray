@@ -17,8 +17,8 @@ const VORONOI_MANHATTAN: u32 = 1u;
 const VORONOI_CHEBYCHEV: u32 = 2u;
 const VORONOI_MINKOWSKI: u32 = 3u;
 
-// `VoronoiParams`, the node's inputs after its clamps.
-struct VParams {
+// `VoronoiParam`, the node's inputs after its clamps.
+struct VParam {
     feature: u32,
     metric: u32,
     detail: f32,
@@ -32,7 +32,7 @@ struct VParams {
 }
 
 // `voronoi_distance` for the metric.
-fn voronoi_distance(a: vec3<f32>, b: vec3<f32>, p: VParams) -> f32 {
+fn voronoi_distance(a: vec3<f32>, b: vec3<f32>, p: VParam) -> f32 {
     let d = abs(a - b);
     switch p.metric {
         case VORONOI_MANHATTAN: { return d.x + d.y + d.z; }
@@ -46,7 +46,7 @@ fn voronoi_distance(a: vec3<f32>, b: vec3<f32>, p: VParams) -> f32 {
 }
 
 // An octave's result: `.rgb` the cell's colour, `.w` the distance.
-fn voronoi_f1(p: VParams, coord: vec3<f32>) -> vec4<f32> {
+fn voronoi_f1(p: VParam, coord: vec3<f32>) -> vec4<f32> {
     let cell_f = floor(coord);
     let local = coord - cell_f;
     let cell = vec3<i32>(cell_f);
@@ -65,7 +65,7 @@ fn voronoi_f1(p: VParams, coord: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(hash_int3_to_float3(cell + nearest), min_d);
 }
 
-fn voronoi_f2(p: VParams, coord: vec3<f32>) -> vec4<f32> {
+fn voronoi_f2(p: VParam, coord: vec3<f32>) -> vec4<f32> {
     let cell_f = floor(coord);
     let local = coord - cell_f;
     let cell = vec3<i32>(cell_f);
@@ -87,7 +87,7 @@ fn voronoi_f2(p: VParams, coord: vec3<f32>) -> vec4<f32> {
 
 // `voronoi_smooth_f1`: the 5 × 5 × 5 neighbourhood blended by the
 // smoothness, with Cycles' correction terms.
-fn voronoi_smooth_f1(p: VParams, coord: vec3<f32>) -> vec4<f32> {
+fn voronoi_smooth_f1(p: VParam, coord: vec3<f32>) -> vec4<f32> {
     let cell_f = floor(coord);
     let local = coord - cell_f;
     let cell = vec3<i32>(cell_f);
@@ -113,7 +113,7 @@ fn voronoi_smooth_f1(p: VParams, coord: vec3<f32>) -> vec4<f32> {
 
 // `voronoi_distance_to_edge`: the closest point, then the nearest of the
 // perpendicular bisectors toward the others.
-fn voronoi_distance_to_edge(p: VParams, coord: vec3<f32>) -> f32 {
+fn voronoi_distance_to_edge(p: VParam, coord: vec3<f32>) -> f32 {
     let cell_f = floor(coord);
     let local = coord - cell_f;
     let cell = vec3<i32>(cell_f);
@@ -147,7 +147,7 @@ fn voronoi_distance_to_edge(p: VParams, coord: vec3<f32>) -> f32 {
 
 // `voronoi_n_sphere_radius`: half the distance from the closest point to
 // its own closest neighbour.
-fn voronoi_n_sphere_radius(p: VParams, coord: vec3<f32>) -> f32 {
+fn voronoi_n_sphere_radius(p: VParam, coord: vec3<f32>) -> f32 {
     let cell_f = floor(coord);
     let local = coord - cell_f;
     let cell = vec3<i32>(cell_f);
@@ -181,7 +181,7 @@ fn voronoi_n_sphere_radius(p: VParams, coord: vec3<f32>) -> f32 {
 }
 
 // One octave of F1 / F2 / Smooth F1.
-fn voronoi_octave(p: VParams, coord: vec3<f32>) -> vec4<f32> {
+fn voronoi_octave(p: VParam, coord: vec3<f32>) -> vec4<f32> {
     if (p.feature == VORONOI_F2) { return voronoi_f2(p, coord); }
     if (p.feature == VORONOI_SMOOTH_F1 && p.smoothness != 0.0) { return voronoi_smooth_f1(p, coord); }
     return voronoi_f1(p, coord);
@@ -189,7 +189,7 @@ fn voronoi_octave(p: VParams, coord: vec3<f32>) -> vec4<f32> {
 
 // `fractal_voronoi_x_fx`: the octaves summed by the roughness, normalized
 // by the largest distance the metric allows when asked.
-fn fractal_voronoi_x_fx(p: VParams, coord: vec3<f32>) -> vec4<f32> {
+fn fractal_voronoi_x_fx(p: VParam, coord: vec3<f32>) -> vec4<f32> {
     var amplitude = 1.0; var max_amplitude = 0.0; var scale = 1.0;
     var out = vec4<f32>(0.0);
     let zero_input = p.detail == 0.0 || p.roughness == 0.0;
@@ -218,7 +218,7 @@ fn fractal_voronoi_x_fx(p: VParams, coord: vec3<f32>) -> vec4<f32> {
 
 // `fractal_voronoi_distance_to_edge`: the fractalization with lerps where
 // fBm adds.
-fn fractal_voronoi_distance_to_edge(p: VParams, coord: vec3<f32>) -> f32 {
+fn fractal_voronoi_distance_to_edge(p: VParam, coord: vec3<f32>) -> f32 {
     var amplitude = 1.0; var max_amplitude = p.max_distance; var scale = 1.0;
     var dist = 8.0;
     let zero_input = p.detail == 0.0 || p.roughness == 0.0;
@@ -250,7 +250,7 @@ fn fractal_voronoi_distance_to_edge(p: VParams, coord: vec3<f32>) -> f32 {
 // without one). The node's clamps: Detail 0 ..= 15, Roughness and
 // Randomness 0 ..= 1, Smoothness halved into 0 ..= 0.5.
 fn voronoi_texture_3d(co: vec3<f32>, feature: u32, metric: u32, detail: f32, roughness: f32, lacunarity: f32, smoothness: f32, exponent: f32, randomness: f32, normalize: bool) -> vec4<f32> {
-    var p: VParams;
+    var p: VParam;
     p.feature = feature;
     p.metric = metric;
     p.detail = clamp(detail, 0.0, 15.0);

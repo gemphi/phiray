@@ -1,5 +1,5 @@
 //! Workbench's anti-aliasing (`workbench_effect_antialiasing.cc`): the
-//! view is drawn `SAMPLES` times, each sample offset by a jitter from
+//! view is drawn `SAMPLE_COUNT` times, each sample offset by a jitter from
 //! `BLI_jitter_init`'s relaxed table — the sample nearest the centre
 //! first, then each the farthest from the one before — and the samples
 //! are gathered with a 3 × 3 Blackman-Harris filter of width 2 in
@@ -12,11 +12,11 @@
 use std::sync::OnceLock;
 
 /// `U.viewport_aa`'s default: eight samples.
-pub const SAMPLES: u32 = 8;
+pub const SAMPLE_COUNT: u32 = 8;
 /// The sample counts Workbench has a table for (`TaaSamples::x5 … x32`,
 /// `eSceneDisplay_AA`); 0 is no anti-aliasing and 1 a single pass with
 /// SMAA alone (`SCE_DISPLAY_AA_OFF`, `_FXAA`).
-pub const COUNTS: [u32; 5] = [5, 8, 11, 16, 32];
+pub const COUNT_LIST: [u32; 5] = [5, 8, 11, 16, 32];
 
 /// A count asked for as Workbench takes it: 0 and 1 as they are, else
 /// the table whose count it is — `setup_view`'s `switch` falls back to
@@ -24,7 +24,7 @@ pub const COUNTS: [u32; 5] = [5, 8, 11, 16, 32];
 pub fn count(asked: u32) -> u32 {
     match asked {
         0 | 1 => asked,
-        n if COUNTS.contains(&n) => n,
+        n if COUNT_LIST.contains(&n) => n,
         _ => 5,
     }
 }
@@ -179,11 +179,11 @@ pub fn table(n: usize) -> Vec<[f32; 2]> {
 
 /// Sample `k` of `n`'s offset, in `−1 ..= 1` (half a pixel either way
 /// once `window_translate_m4` divides it by the resolution); `n` one of
-/// `COUNTS` (`count`), or 0 or 1 — a single sample, drawn unjittered.
+/// `COUNT_LIST` (`count`), or 0 or 1 — a single sample, drawn unjittered.
 pub fn offset(k: u32, n: u32) -> [f32; 2] {
-    static TABLES: OnceLock<Vec<Vec<[f32; 2]>>> = OnceLock::new();
-    let tables = TABLES.get_or_init(|| COUNTS.iter().map(|&n| table(n as usize)).collect());
-    let Some(t) = COUNTS.iter().position(|&c| c == count(n)).map(|i| &tables[i]) else {
+    static TABLE_LIST: OnceLock<Vec<Vec<[f32; 2]>>> = OnceLock::new();
+    let tables = TABLE_LIST.get_or_init(|| COUNT_LIST.iter().map(|&n| table(n as usize)).collect());
+    let Some(t) = COUNT_LIST.iter().position(|&c| c == count(n)).map(|i| &tables[i]) else {
         return [0.0, 0.0];
     };
     t[(k as usize) % t.len()]
@@ -262,7 +262,7 @@ mod tests {
     /// takes the five-sample one, as `setup_view` does.
     #[test]
     fn every_count_has_its_table_and_the_rest_fall_back() {
-        for n in COUNTS {
+        for n in COUNT_LIST {
             assert_eq!(table(n as usize).len(), n as usize);
             assert_eq!(offset(0, n), [0.0, 0.0]);
             assert_eq!(offset(n, n), offset(0, n));

@@ -1,7 +1,7 @@
 //! The rig both power tests stand on: a 20 m Lambertian plane, a black
 //! world, and an orthographic camera straight down on it, as
 //! `truth/blender_lamp_power.py` sets it up (`lamp_power.rs`, `world_power.rs`).
-use phiray::{Atlas, Camera, LIGHTS, Light, Tri};
+use phiray::{Atlas, Camera, MAX_LIGHT, Light, Tri};
 pub const W: u32 = 32;
 /// A black world: the lamp is the only light.
 pub fn dark() -> Atlas {
@@ -27,7 +27,7 @@ pub fn plane() -> Vec<Tri> {
 /// Straight down on the origin, orthographic, 2 m across — the frame
 /// `blender_lamp_power.py` sets up.
 pub fn overhead(light: Light, count: u32) -> Camera {
-    let mut lights = [Light::default(); LIGHTS];
+    let mut lights = [Light::default(); MAX_LIGHT];
     lights[0] = light;
     Camera {
         right: [1.0, 0.0, 0.0],

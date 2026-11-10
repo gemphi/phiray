@@ -5,7 +5,7 @@
 // instance table), projected exactly as `solid.wgsl` casts its rays — so
 // the hit it writes per pixel is the one the ray would have found — and
 // the depth test keeps the nearest. Each mesh is one instanced draw over
-// the instances that show it (`Trees::draws`): `instance_index` names the
+// the instances that show it (`Forest::draws`): `instance_index` names the
 // draw slot, `draw_inst` the instance placing this copy. The fragment
 // writes the face, the instance and its two barycentrics, each a whole
 // word: the instance took the word the distance along the ray used to

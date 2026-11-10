@@ -1,6 +1,6 @@
 //! GPU tests run on any adapter (lavapipe in CI); skipped when none exists.
 
-use phiray::kernels::{Pair, Skin, SkinParams};
+use phiray::kernel::{Pair, Skin, SkinParam};
 use phiray::{GpuArray, Pass, Ray};
 
 fn translate(x: f32, y: f32, z: f32) -> [f32; 16] {
@@ -59,7 +59,7 @@ fn skin_matches_cpu_and_replays() {
     let out = GpuArray::<[f32; 4]>::from(&gpu, &vec![[0.0; 4]; n]);
 
     let mut pass = Pass::default();
-    let params = SkinParams { min, ..Default::default() };
+    let params = SkinParam { min, ..Default::default() };
     pass.add::<Skin>(&gpu, n as u32, params, &[r.buffer(), o.buffer(), q.buffer(), b.buffer(), out.buffer()]);
     pass.run(&gpu);
     close(&out.read(&gpu), &Skin::cpu(&rest, &offsets, &pairs, &bones, min));

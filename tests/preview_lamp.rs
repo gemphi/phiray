@@ -16,7 +16,7 @@ fn a_lamp_casts_a_shadow_as_soft_as_its_radius() {
     // that shadow's outer edge past the small card's silhouette.
     scene.extend(card(0.3, 1.0, None));
     let lit_by = |li: Light, blocked: bool| {
-        let mut lights = [Light::default(); phiray::LIGHTS];
+        let mut lights = [Light::default(); phiray::MAX_LIGHT];
         lights[0] = li;
         let cam = Camera { count: 1, lights, envmap: 0, env_cdf: 0, preview: [0; 4], env: [0.05, 0.05, 0.05, 1.0], ..camera() };
         let geo: Vec<Tri> = if blocked { scene.clone() } else { card(3.0, 2.0, None) };
@@ -88,7 +88,7 @@ fn an_area_lights_penumbra_follows_its_own_shape() {
         ..Light::default()
     };
     let shot = |li: Light, blocked: bool| {
-        let mut lights = [Light::default(); phiray::LIGHTS];
+        let mut lights = [Light::default(); phiray::MAX_LIGHT];
         lights[0] = li;
         let cam = Camera { count: 1, lights, envmap: 0, env_cdf: 0, preview: [0; 4], env: [0.05, 0.05, 0.05, 1.0], ..camera() };
         let geo: Vec<Tri> = if blocked { scene.clone() } else { card(3.0, 2.0, None) };
@@ -129,7 +129,7 @@ fn a_spots_blend_fades_the_edge_of_its_cone() {
         Light { pos: [0.0, -2.0, 0.0], kind: 2, color: [600.0, 600.0, 600.0], size: 0.0, dir: [0.0, 1.0, 0.0], cone, blend: (1.0 - cone) * blend, ..Light::default() }
     };
     let shot = |blend: f32| {
-        let mut lights = [Light::default(); phiray::LIGHTS];
+        let mut lights = [Light::default(); phiray::MAX_LIGHT];
         lights[0] = spot(blend);
         let cam = Camera { count: 1, lights, envmap: 0, env_cdf: 0, preview: [0; 4], env: [0.02, 0.02, 0.02, 1.0], ..camera() };
         render(Mode::Preview, cam, &scene, &atlas).0
@@ -164,7 +164,7 @@ fn a_scaled_spots_pool_of_light_is_an_ellipse() {
     // world's, so its Y lies along the world's Z — the image's vertical.
     let shot = |right: [f32; 3], spot_scale: [f32; 2]| {
         let cone = 6.0_f32.to_radians().cos();
-        let mut lights = [Light::default(); phiray::LIGHTS];
+        let mut lights = [Light::default(); phiray::MAX_LIGHT];
         lights[0] = Light {
             pos: [0.0, -2.0, 0.0],
             kind: 2,

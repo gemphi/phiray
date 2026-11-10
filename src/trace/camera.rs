@@ -120,7 +120,7 @@ pub struct Camera {
     /// count, first word of the vertices' colour attribute — 0 when no
     /// object has one (`Scene::paint`), _]` — each instance's placement
     /// and the root of its tree (`Instance::words`), then the top tree's
-    /// slot order (`Trees`).
+    /// slot order (`Forest`).
     pub insts: [u32; 4],
     /// The visibility prepass (set by the tracer): `[drawn, pixels a row
     /// of its hits spans, orthographic depth reach bits, perspective near
@@ -224,7 +224,7 @@ pub struct Camera {
     /// zeroed Camera renders as it always did. `caustics` is bit 0
     /// Reflective, bit 1 Refractive. [`Camera::with_integrator`] writes it.
     pub integrator: [f32; 4],
-    pub lights: [Light; LIGHTS],
+    pub lights: [Light; MAX_LIGHT],
 }
 
 impl Camera {
@@ -329,7 +329,7 @@ impl Look {
     }
 }
 
-pub const LIGHTS: usize = 64;
+pub const MAX_LIGHT: usize = 64;
 
 // Every field's default is zero, and `derive(Default)` stops at arrays of 32.
 impl Default for Camera {

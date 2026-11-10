@@ -240,7 +240,7 @@ fn lamp_reach(li: Light, at: vec3<f32>) -> f32 {
 
 // Probability that `glow_query` picks face `f` (0 when it does not glow).
 // The share of the light table a hit holds: its (face, instance) pair,
-// found among the emitters sorted by face then instance (`lamps.rs`), 0
+// found among the emitters sorted by face then instance (`lamp.rs`), 0
 // when it is not one. An emissive mesh shown by many instances is one
 // emitter an instance, so the instance tells them apart.
 fn lamp_chance(h: Hit) -> f32 {

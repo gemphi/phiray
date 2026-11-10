@@ -11,8 +11,8 @@ const BLEND_RADIAL: u32 = 4u;
 const BLEND_QUADRATIC_SPHERE: u32 = 5u;
 const BLEND_SPHERICAL: u32 = 6u;
 // `NodeTexWave`: type, bands / rings direction, profile.
-const WAVE_BANDS: u32 = 0u;
-const WAVE_RINGS: u32 = 1u;
+const WAVE_BAND: u32 = 0u;
+const WAVE_RING: u32 = 1u;
 const WAVE_DIRECTION_X: u32 = 0u;
 const WAVE_DIRECTION_Y: u32 = 1u;
 const WAVE_DIRECTION_Z: u32 = 2u;
@@ -146,7 +146,7 @@ fn magic_texture(p: vec3<f32>, scale: f32, depth: i32, distortion0: f32) -> vec4
 fn wave_fac(kind: u32, bands_dir: u32, rings_dir: u32, profile: u32, p0: vec3<f32>, distortion: f32, detail: f32, dscale: f32, droughness: f32, phase: f32) -> f32 {
     let p = (p0 + 0.000001) * 0.999999;
     var n = 0.0;
-    if (kind == WAVE_BANDS) {
+    if (kind == WAVE_BAND) {
         switch bands_dir {
             case WAVE_DIRECTION_X: { n = p.x * 20.0; }
             case WAVE_DIRECTION_Y: { n = p.y * 20.0; }

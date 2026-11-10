@@ -36,14 +36,14 @@ pub struct Clock {
 }
 impl Clock {
     /// Two 8-byte ticks.
-    const BYTES: u64 = 16;
+    const SIZE: u64 = 16;
     /// `None` when the device was not opened with timestamp queries.
     pub fn new(gpu: &Gpu) -> Option<Self> {
         if !gpu.timed {
             return None;
         }
         let stamps = gpu.device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("phiray.clock"), ty: wgpu::QueryType::Timestamp, count: 2 });
-        let buffer = |label, usage| gpu.device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size: Self::BYTES, usage, mapped_at_creation: false });
+        let buffer = |label, usage| gpu.device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size: Self::SIZE, usage, mapped_at_creation: false });
         let ticks = buffer("phiray.clock.ticks", wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC);
         let staging = buffer("phiray.clock.read", wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
         Some(Self { stamps, ticks, staging })
@@ -58,7 +58,7 @@ impl Clock {
         pass.record(&mut enc, steps, writes);
         if let Some(c) = clock {
             enc.resolve_query_set(&c.stamps, 0..2, &c.ticks, 0);
-            enc.copy_buffer_to_buffer(&c.ticks, 0, &c.staging, 0, Self::BYTES);
+            enc.copy_buffer_to_buffer(&c.ticks, 0, &c.staging, 0, Self::SIZE);
         }
         gpu.queue.submit([enc.finish()]);
         let submit = at.elapsed();

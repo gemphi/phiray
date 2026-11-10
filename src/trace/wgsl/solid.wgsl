@@ -7,7 +7,7 @@
 // effects follow in `fx.wgsl`, over what `fx_store` leaves.
 
 // The most surfaces X-ray sees through along one ray.
-const XRAY_LAYERS: u32 = 32u;
+const XRAY_LAYER_COUNT: u32 = 32u;
 
 // Workbench's colour for the surface `h` meets along `d`, scene-linear. A
 // back face turns toward the viewer when `facing` (the opaque pass,
@@ -206,7 +206,7 @@ fn xray(o: vec3<f32>, d: vec3<f32>, background: vec3<f32>) -> Xray {
     var ahead = 0.0;
     var last = 0xffffffffu;
     var last_inst = 0u;
-    for (var k = 0u; k < XRAY_LAYERS; k++) {
+    for (var k = 0u; k < XRAY_LAYER_COUNT; k++) {
         let h = trace(o + d * ahead, d, INF, false);
         if (h.tri == 0xffffffffu) { break; }
         let t = ahead + h.t;
@@ -270,7 +270,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var h = primary(o, d, i);
     // Backface Culling (`DRW_STATE_CULL_BACK`): a face turned away is not
     // drawn, so the ray goes on past it to what is behind.
-    for (var k = 0u; k < XRAY_LAYERS && p.shade.z != 0u && h.tri != 0xffffffffu; k++) {
+    for (var k = 0u; k < XRAY_LAYER_COUNT && p.shade.z != 0u && h.tri != 0xffffffffu; k++) {
         let t = tri_at(h);
         if (dot(world_ng(h, t), d) < 0.0) { break; }
         let ahead = h.t + max(h.t, 1.0) * 1e-5;

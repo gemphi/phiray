@@ -15,7 +15,7 @@ mod atlas;
 mod build;
 mod camera;
 mod kernel;
-mod lamps;
+mod lamp;
 mod light;
 mod mat;
 mod pose;
@@ -25,14 +25,14 @@ mod scene;
 mod shader;
 pub mod smaa;
 pub mod taa;
-mod trees;
+mod forest;
 mod visible;
 
 pub use atlas::Atlas;
-pub use camera::{Camera, LIGHTS, Look, PixelFilter, View};
+pub use camera::{Camera, MAX_LIGHT, Look, PixelFilter, View};
 pub use kernel::{NO_MAT, NO_TEX, Tri};
 pub use light::{AREA_DISK, AREA_ELLIPSE, AREA_RECT, AREA_SQUARE, Light};
-pub use lamps::Lamps;
+pub use lamp::LampList;
 
 pub use shader::{Adapt, AdaptClear, AdaptDilate, AdaptGather, Edge, Fx, Glow, Preview, Preview4, Show, Smaa, Solid, Solid4, Taa, Trace, Trace4, Wire, Wire4};
 pub use outline::Outline;
@@ -53,7 +53,7 @@ pub struct Tracer {
     faces: Vec<GpuArray<[u32; 4]>>,
     verts: Vec<GpuArray<[f32; 8]>>,
     /// `[table…, atlas…, instances…]` (`Scene::table`, `Atlas::words`,
-    /// `Trees::inst_words`: each record, the top-tree order, the draw order).
+    /// `Forest::inst_words`: each record, the top-tree order, the draw order).
     data: GpuArray<u32>,
     /// `[packed pixel × n, accumulated rgb × n]`.
     px: Option<GpuArray<u32>>,
@@ -78,7 +78,7 @@ pub struct Tracer {
     /// the samples, not on its own.
     reshow: bool,
     raster: bool,
-    /// The prepass's draws: one instanced draw a mesh (`Trees::draws`).
+    /// The prepass's draws: one instanced draw a mesh (`Forest::draws`).
     draws: Vec<[u32; 4]>,
     /// The scene's world bounds (the prepass's orthographic depth reach).
     bounds: Aabb,
@@ -102,7 +102,7 @@ pub struct Tracer {
     /// Which kernel draws a frame. Solid is Workbench — one deterministic
     /// dispatch; the others path trace and refine.
     mode: Mode,
-    /// Samples a still view refines to (`SAMPLES` unless set).
+    /// Samples a still view refines to (`SAMPLE_COUNT` unless set).
     target: u32,
     /// Solid and Wireframe's anti-aliasing count (`set_aa_samples`).
     aa: u32,
@@ -126,7 +126,7 @@ impl Tracer {
     }
 
     /// Samples averaged before a still view stops refining.
-    pub const SAMPLES: u32 = 32;
+    pub const SAMPLE_COUNT: u32 = 32;
 
     /// Pick the kernel. Changing it drops the recorded pass so the next frame
     /// records the new one.
@@ -229,7 +229,7 @@ impl Tracer {
         let px = self.px.as_ref()?;
         // A short read means the device declined; say nothing rather than
         // claim a converged frame and stop early.
-        px.read_range(gpu, Self::PX_WORDS * n, 1).first().copied()
+        px.read_range(gpu, Self::PX_LEN * n, 1).first().copied()
     }
 
     pub fn set_adaptive(&mut self, adapt: [f32; 4]) {

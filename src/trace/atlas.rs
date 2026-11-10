@@ -111,21 +111,21 @@ impl Atlas {
     /// coefficients and its prefiltered copies (`ibl.rs`). The image itself
     /// is expected to be in the atlas already, as roughness 0.
     pub fn add_env_lighting(&mut self, w: u32, h: u32, rgb: &[f32]) -> super::ibl::EnvLighting {
-        use super::ibl::{Ibl, LEVELS, Panorama};
+        use super::ibl::{Ibl, LEVEL_COUNT, Panorama};
         let env = Panorama::new(w, h, rgb);
         let coefficients = Ibl::irradiance(&env);
         let words: Vec<u32> = coefficients.iter().flatten().map(|v| v.to_bits()).collect();
         let irradiance = self.add_bits(27, 1, &words);
         let chain = Ibl::chain(&env);
         let mut prefiltered = 0;
-        for level in 1..LEVELS {
-            let copy = Ibl::prefiltered(&chain, level as f32 / (LEVELS - 1) as f32);
+        for level in 1..LEVEL_COUNT {
+            let copy = Ibl::prefiltered(&chain, level as f32 / (LEVEL_COUNT - 1) as f32);
             let id = self.add_hdr(copy.w, copy.h, &copy.rgb);
             if level == 1 {
                 prefiltered = id;
             }
         }
-        super::ibl::EnvLighting { irradiance, prefiltered, levels: LEVELS }
+        super::ibl::EnvLighting { irradiance, prefiltered, levels: LEVEL_COUNT }
     }
 
     /// Add a linear float RGB image as RGBE (one shared exponent per texel),
