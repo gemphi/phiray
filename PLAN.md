@@ -45,6 +45,12 @@ step is to measure.
 | `src/surface/` | per-face textures, analytic vector textures | Replica-Dataset, AnalyticTextXR | 10 |
 | `src/grad/` | edge gradients over `vis` | DRTK, pytorch3d | 11 |
 | `src/hw/` | hardware ray query behind a feature | `MTLAccelerationStructure.h:201` | 12 |
+| `src/gpu/mod.rs` | for the web: the device opened through the async door that has no caller today; a constructor that adopts a device and queue another crate already holds | phikit `docs/web.md`, blockers 1 and 3 | with 3 |
+| `src/gpu/present.rs` | the traced image handed on as a texture, with no readback: what the web needs and what the desktop's present path wants | `CAMetalLayer.h:54`; phikit `docs/web.md` | with 3 |
+
+Names are singular: files, folders and types. The plural names in the tree
+above (`kernels`, `trees`, `lamps`) are being made singular in a separate
+change, so this table will trail it.
 
 Suggested, not decided: `src/trace/wgsl/` holds 38 files in one folder. As
 kernels are added, group them by stage (`walk/`, `shade/`, `display/`,

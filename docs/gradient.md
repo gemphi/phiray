@@ -1,4 +1,4 @@
-# gradients
+# gradient
 
 Every box on this page is to build, and it is the last lane: it stands on
 `vis`.

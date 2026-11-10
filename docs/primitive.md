@@ -1,4 +1,4 @@
-# primitives
+# primitive
 
 ```mermaid
 graph LR

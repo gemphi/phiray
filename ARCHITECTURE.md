@@ -115,11 +115,11 @@ graph LR
 ## Pages, one subject each
 
 - [frame](docs/frame.md): one sample and its tail today, by mode, and the split to make
-- [primitives](docs/primitives.md): the kinds a ray can meet and the one seam they share
+- [primitive](docs/primitive.md): the kinds a ray can meet and the one seam they share
 - [accel](docs/accel.md): trees, refit, node format, beam cut, ray query
 - [sampling](docs/sampling.md): which rays a frame casts, and how many
 - [reconstruct](docs/reconstruct.md): from sums to a shown image
-- [gradients](docs/gradients.md): the differentiable lane
+- [gradient](docs/gradient.md): the differentiable lane
 
 Folders and order of work: [PLAN.md](PLAN.md) ·
 What each part must do: [SPECS.md](SPECS.md) ·
