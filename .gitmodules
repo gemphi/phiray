@@ -19,3 +19,78 @@
 [submodule "reference/projectaria_tools"]
 	path = reference/projectaria_tools
 	url = https://github.com/facebookresearch/projectaria_tools.git
+[submodule "reference/vkraygs"]
+	path = reference/vkraygs
+	url = https://github.com/facebookresearch/vkraygs.git
+[submodule "reference/CLOD-3DGS"]
+	path = reference/CLOD-3DGS
+	url = https://github.com/facebookresearch/CLOD-3DGS.git
+[submodule "reference/HVVR"]
+	path = reference/HVVR
+	url = https://github.com/facebookresearch/HVVR.git
+[submodule "reference/volumetric_primitives"]
+	path = reference/volumetric_primitives
+	url = https://github.com/facebookresearch/volumetric_primitives.git
+[submodule "reference/HairMSNN"]
+	path = reference/HairMSNN
+	url = https://github.com/facebookresearch/HairMSNN.git
+[submodule "reference/lightplane"]
+	path = reference/lightplane
+	url = https://github.com/facebookresearch/lightplane.git
+[submodule "reference/mvp"]
+	path = reference/mvp
+	url = https://github.com/facebookresearch/mvp.git
+[submodule "reference/neuralvolumes"]
+	path = reference/neuralvolumes
+	url = https://github.com/facebookresearch/neuralvolumes.git
+[submodule "reference/DONERF"]
+	path = reference/DONERF
+	url = https://github.com/facebookresearch/DONERF.git
+[submodule "reference/DeepFovea"]
+	path = reference/DeepFovea
+	url = https://github.com/facebookresearch/DeepFovea.git
+[submodule "reference/AnalyticTextXR"]
+	path = reference/AnalyticTextXR
+	url = https://github.com/facebookresearch/AnalyticTextXR.git
+[submodule "reference/NSVF"]
+	path = reference/NSVF
+	url = https://github.com/facebookresearch/NSVF.git
+[submodule "reference/SteepGS"]
+	path = reference/SteepGS
+	url = https://github.com/facebookresearch/SteepGS.git
+[submodule "reference/hyperreel"]
+	path = reference/hyperreel
+	url = https://github.com/facebookresearch/hyperreel.git
+[submodule "reference/neural-light-fields"]
+	path = reference/neural-light-fields
+	url = https://github.com/facebookresearch/neural-light-fields.git
+[submodule "reference/TMPI"]
+	path = reference/TMPI
+	url = https://github.com/facebookresearch/TMPI.git
+[submodule "reference/Online-3DGS-Monocular"]
+	path = reference/Online-3DGS-Monocular
+	url = https://github.com/facebookresearch/Online-3DGS-Monocular.git
+[submodule "reference/egocentric_splats"]
+	path = reference/egocentric_splats
+	url = https://github.com/facebookresearch/egocentric_splats.git
+[submodule "reference/4DGT"]
+	path = reference/4DGT
+	url = https://github.com/facebookresearch/4DGT.git
+[submodule "reference/localrf"]
+	path = reference/localrf
+	url = https://github.com/facebookresearch/localrf.git
+[submodule "reference/robust-dynrf"]
+	path = reference/robust-dynrf
+	url = https://github.com/facebookresearch/robust-dynrf.git
+[submodule "reference/nonrigid_nerf"]
+	path = reference/nonrigid_nerf
+	url = https://github.com/facebookresearch/nonrigid_nerf.git
+[submodule "reference/SceNeRFlow"]
+	path = reference/SceNeRFlow
+	url = https://github.com/facebookresearch/SceNeRFlow.git
+[submodule "reference/PlatoNeRF"]
+	path = reference/PlatoNeRF
+	url = https://github.com/facebookresearch/PlatoNeRF.git
+[submodule "reference/Replica-Dataset"]
+	path = reference/Replica-Dataset
+	url = https://github.com/facebookresearch/Replica-Dataset.git
