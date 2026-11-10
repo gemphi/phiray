@@ -1,0 +1,21 @@
+[submodule "reference/ocean"]
+	path = reference/ocean
+	url = https://github.com/facebookresearch/ocean.git
+[submodule "reference/DRTK"]
+	path = reference/DRTK
+	url = https://github.com/facebookresearch/DRTK.git
+[submodule "reference/pytorch3d"]
+	path = reference/pytorch3d
+	url = https://github.com/facebookresearch/pytorch3d.git
+[submodule "reference/scenescript"]
+	path = reference/scenescript
+	url = https://github.com/facebookresearch/scenescript.git
+[submodule "reference/efm3d"]
+	path = reference/efm3d
+	url = https://github.com/facebookresearch/efm3d.git
+[submodule "reference/hot3d"]
+	path = reference/hot3d
+	url = https://github.com/facebookresearch/hot3d.git
+[submodule "reference/projectaria_tools"]
+	path = reference/projectaria_tools
+	url = https://github.com/facebookresearch/projectaria_tools.git
