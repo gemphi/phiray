@@ -51,11 +51,34 @@ struct Surf {
     // Fabric sheen and clearcoat.
     sheen: f32, sheen_rough: f32, sheen_tint: vec3<f32>,
     coat: f32, coat_rough: f32,
+    // The dielectric layer's IOR and its share of the reflection (one minus
+    // the metallic), for the true Fresnel curve (`fresnel_of`). An IOR of 0
+    // leaves the surface on Schlick's curve, as the plain surfaces are.
+    eta: f32, dielectric: f32,
 }
 
 // A surface with only the base lobes (secondary hits, Workbench-style shading).
 fn plain_surf(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, albedo: vec3<f32>, f0: vec3<f32>, rough: f32) -> Surf {
-    return Surf(pos, n, v, albedo, f0, rough, 0.0, vec3<f32>(1.0), 0.0, 0.5, vec3<f32>(1.0), 0.0, 0.03);
+    return Surf(pos, n, v, albedo, f0, rough, 0.0, vec3<f32>(1.0), 0.0, 0.5, vec3<f32>(1.0), 0.0, 0.03, 0.0, 0.0);
+}
+
+// The reflectance of a surface at `cos`, the angle between the view and the
+// microfacet. Schlick's fifth power from `f0`, and for the dielectric share
+// the difference to the true curve of its IOR: Cycles' Principled gives its
+// specular layer `exponent = -eta`, which `microfacet_fresnel`
+// (`closure/bsdf_microfacet.h`) reads as "the real Fresnel, between F0 and
+// F90". Schlick alone overshoots at glancing angles, the more the lower the
+// IOR: at 80 degrees a floor of Specular IOR Level 0.115 (CW-POSES) reflects
+// 0.28 and Schlick says 0.39, and the far floor washed out to the sky.
+fn fresnel_of(s: Surf, cos: f32) -> vec3<f32> {
+    let schlick = pow(1.0 - cos, 5.0);
+    var f = s.f0 + (1.0 - s.f0) * schlick;
+    if (s.eta > 1.0 && s.dielectric > 0.0) {
+        let r = (s.eta - 1.0) / (s.eta + 1.0);
+        let face_on = r * r;
+        f += vec3<f32>(s.dielectric * (fresnel_dielectric_cos(cos, s.eta) - face_on - (1.0 - face_on) * schlick));
+    }
+    return max(f, vec3<f32>(0.0));
 }
 
 // Scattering radius (world units) as the tint light picks up under the skin:
@@ -112,6 +135,23 @@ fn dielectric_f0(ior: f32) -> vec3<f32> {
 fn under_layer(f0: vec3<f32>, rough: f32, nv: f32) -> f32 {
     let e = env_brdf(f0, rough, nv);
     return clamp(1.0 - max(e.r, max(e.g, e.b)), 0.0, 1.0);
+}
+
+// The same under a dielectric of IOR `eta` whose reflectance climbs by the
+// true Fresnel curve (`fresnel_of`). `env_brdf` is fitted to Schlick's
+// climb, so its climbing part is scaled by how the true curve compares at
+// this angle: where Schlick overshoots, less is taken from the diffuse.
+// Cycles reads this from a table (`bsdf_albedo`, the `ggx_gen_schlick_ior_s`
+// lookup); this stands in for it.
+fn under_layer_real(eta: f32, rough: f32, nv: f32) -> f32 {
+    let r = (eta - 1.0) / (eta + 1.0);
+    let face_on = r * r;
+    let climb = env_brdf(vec3<f32>(0.0), rough, nv).r;
+    let flat = env_brdf(vec3<f32>(1.0), rough, nv).r - climb;
+    let schlick = (1.0 - face_on) * pow(1.0 - nv, 5.0);
+    let real = fresnel_dielectric_cos(nv, eta) - face_on;
+    let scale = clamp(real / max(schlick, 1e-5), 0.0, 1.0);
+    return clamp(1.0 - (face_on * flat + climb * scale), 0.0, 1.0);
 }
 
 // Film ▸ Pixel Filter: where in its pixel a camera ray goes, in pixels from
@@ -210,7 +250,7 @@ fn brdf_w(s: Surf, l: vec3<f32>, e: vec3<f32>, wd: f32, ws: f32) -> vec3<f32> {
     let a2 = max(s.rough * s.rough * s.rough * s.rough, 1e-4);
     let dd = nh * nh * (a2 - 1.0) + 1.0;
     let dist = a2 / (PI * dd * dd);
-    let fres = s.f0 + (1.0 - s.f0) * pow(1.0 - hvv, 5.0);
+    let fres = fresnel_of(s, hvv);
     // Cycles' `bsdf_microfacet_eval`: D · F · G2 / (4 · n·i · n·o), with the
     // n·o supplied by the `nl` this is multiplied by on the way out.
     let nv = max(dot(s.n, s.v), 1e-4);
