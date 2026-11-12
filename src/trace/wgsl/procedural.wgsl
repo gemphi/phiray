@@ -265,8 +265,16 @@ fn bump_normal(w: u32, n: vec3<f32>, pobj: vec3<f32>, uv: vec2<f32>, inst: u32, 
     let dx = normalize(cross(n, axis)) * max(foot, 1e-5);
     let dy = cross(n, normalize(dx)) * max(foot, 1e-5);
     let h_c = proc_value(w, pobj, uv, inst).w;
-    let h_x = proc_value(w, pobj + dx * BUMP_FILTER_WIDTH, uv, inst).w;
-    let h_y = proc_value(w, pobj + dy * BUMP_FILTER_WIDTH, uv, inst).w;
+    // `dx` and `dy` are steps in the world, and `pobj` is a point of the
+    // object: the step has to be the object's before the two are added.
+    // They were added as they were, so on an object scaled up the height was
+    // read that many times too far away and the slope came out that many
+    // times too steep. CW-POSES' floor is one face scaled 370 times with a
+    // noise in Object coordinates under a Bump of strength 0.13: Cycles
+    // tilts it about a degree and it mirrors the car; this rippled it like
+    // water (pose 26).
+    let h_x = proc_value(w, pobj + object_vector(inst, dx * BUMP_FILTER_WIDTH), uv, inst).w;
+    let h_y = proc_value(w, pobj + object_vector(inst, dy * BUMP_FILTER_WIDTH), uv, inst).w;
     let rx = cross(dy, n);
     let ry = cross(n, dx);
     let det = dot(dx, rx);
@@ -281,6 +289,13 @@ fn object_point(inst: u32, hit: vec3<f32>) -> vec3<f32> {
     if ((data[inst + 27u] & 1u) != 0u) { return hit; }
     let h = vec4<f32>(hit, 1.0);
     return vec3<f32>(dot(inst_row(inst + 12u), h), dot(inst_row(inst + 16u), h), dot(inst_row(inst + 20u), h));
+}
+
+// A step in the world as the object has it: the instance's inverse without
+// its translation, as `object_point` is with it.
+fn object_vector(inst: u32, step: vec3<f32>) -> vec3<f32> {
+    if ((data[inst + 27u] & 1u) != 0u) { return step; }
+    return vec3<f32>(dot(inst_row(inst + 12u).xyz, step), dot(inst_row(inst + 16u).xyz, step), dot(inst_row(inst + 20u).xyz, step));
 }
 
 // The weight of a material's second lobe at a hit: the mix slot's value
