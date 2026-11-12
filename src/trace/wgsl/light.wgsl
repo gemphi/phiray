@@ -179,6 +179,24 @@ fn hit_lift(t: f32) -> f32 {
     return p.eps + t * 1e-5;
 }
 
+// How far past a surface a ray that goes on through it starts — glass, or a
+// texel's alpha. `hit_lift` will not do: its `p.eps` is a share of the whole
+// scene's extent, and a floor 741 m across (CW-POSES pose 24) made that a
+// centimetre, the thickness of the car's glass roof. The ray then started
+// beyond the pane's far face, crossed one face instead of two, was tinted by
+// the square root of the base colour once instead of twice, and a roof that
+// is nearly black glass glowed red.
+//
+// What has to be cleared is the rounding of the hit point, and that follows
+// the size of its own coordinates, not the scene's: Cycles' `ray_offset`
+// (`kernel/bvh/util.h`, after Ray Tracing Gems ch. 6) steps each coordinate
+// 256 units in the last place, and 1/65536 near the origin. The share for
+// the ray's length stays, since the point was made as `o + d * t`.
+fn through_lift(pos: vec3<f32>, t: f32) -> f32 {
+    let reach = max(max(abs(pos.x), abs(pos.y)), max(abs(pos.z), 0.5));
+    return hit_lift(t) - p.eps + reach * (256.0 / 8388608.0);
+}
+
 // An area light seen from `s`: a point of its own shape, its radiance its flux
 // over its area, `L = P / (π A)`, shining from one side only and judged from
 // that point. Aimed from its centre, a surface over the middle of a wide light

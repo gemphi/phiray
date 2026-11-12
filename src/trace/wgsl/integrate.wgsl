@@ -183,7 +183,8 @@ fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>, bounce: bool
         // closure after a diffuse bounce and that light never arrives.
         if (tw > 0.0 && caustic_refractive() && rnd(seed) < tw) {
             thr *= sqrt(base);
-            org = org + dir * h.t - ng * (p.eps + h.t * 1e-5);
+            let at = org + dir * h.t;
+            org = at - ng * through_lift(at, h.t);
             through = true;
             continue;
         }
