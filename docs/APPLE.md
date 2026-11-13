@@ -65,6 +65,18 @@ Most gain for the effort first. All work on Windows wgpu today unless said.
 | 11 | **Hardware ray queries, behind a feature** | wgpu 29.0.4 sets `EXPERIMENTAL_RAY_QUERY` on Vulkan, DX12 and Metal and has `create_blas` / `create_tlas`. phiray requests no features (R `gpu/mod.rs:231-235`). Every walk goes through `trace` and `trace_blas`, so there is one seam | Large on ray-tracing hardware; unknown on the GTX 1660 Ti named in R `gpu/mod.rs:198` | 10-20 | High: experimental API, a second kernel family |
 | 12 | **GPU-resident present** | Two devices force the CPU hop. wgpu-hal can import a D3D11 shared handle as a Vulkan texture (W `wgpu-hal/src/vulkan/device.rs:544`) | Removes readback and upload for every shown frame | 5-10 plus a gpui primitive | High, untested |
 
+### Measured: rows 1 and 2 on the GTX 1660 Ti
+
+`phiber -b <file> -f 1 --samples 64`, release build, Vulkan, three runs a scene with 60 s idle before each, one render at a time; the figure is the median `drew_ms` of the three (the runs are in `PHIBER-RENDERS/speed/<label>/summary.txt`). Base is `tidy-clock`. A change stays only if some scene gains more than 5 % and none loses more than 5 %.
+
+| Scene | Base (runs) | Row 1 | vs base | Row 2 | vs base |
+|---|---|---|---|---|---|
+| pose 23 (5.5 M faces, 362 instances) | 92,167 ms (87,243 / 92,167 / 96,670) | 93,642 ms | +1.6 % | 98,740 ms | +7.1 % |
+| pose 25 (5.4 M faces, 355 instances) | 75,923 ms (77,322 / 75,923 / 75,532) | 75,261 ms | -0.9 % | 75,240 ms | -0.9 % |
+| pose 26 (7.3 M faces, 574 instances) | 53,838 ms (53,838 / 55,008 / 53,598) | 54,423 ms | +1.1 % | 54,658 ms | +1.5 % |
+| 64-sample PNG, mean abs diff (0-255) vs base | 0 | 0 (all 3 scenes) | | 0 (all 3 scenes) | |
+
+Both were reverted. Row 1 (`0cb95c0`, triangle test before the material read in `trace_blas`) and row 2 (`59d271a`, the child node kept for the next step) draw the identical picture, and neither moves the time beyond the run-to-run spread (10 % on pose 23, 2 % on 25, 2 % on 26). The first run after a new executable was also slower on pose 23 (150 s against 92 s) in both variants. Row 2 on pose 23 is 7 % slower, probably the longer live range of the node in the loop. The walk is not what bounds a sample here: rows 1 and 2 cut loads and a sample cost the same, so the next place to look is shading and the number of rays a path takes (see `jobs.md`). Rows 3 and 4 do not apply: row 3 is the viewport (a final render is already adaptive) and row 4 is Material Preview's compile.
 ## Apple's standards, row by row
 
 | Apple standard | What it standardises | phiray today | Verdict |
