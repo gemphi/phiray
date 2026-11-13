@@ -23,6 +23,7 @@ mod read;
 mod sample;
 mod scene;
 mod shader;
+mod tally;
 pub mod smaa;
 pub mod taa;
 mod forest;
@@ -42,6 +43,7 @@ pub use mat::Mat;
 pub use proc::{PROC_NORMALIZE, Proc};
 pub use srgb::Srgb;
 pub use scene::Scene;
+pub use tally::Tally;
 
 use crate::bvh::{Aabb, Node};
 use crate::gpu::{Clock, Gpu, GpuArray, Pass, Time, Visibility};

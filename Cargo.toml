@@ -12,6 +12,10 @@ workspace = true
 [lib]
 path = "src/lib.rs"
 
+[features]
+# Per-pixel ray and walk counters (`src/trace/tally.rs`), printed at the
+# final read. Off: the kernel compiles them away.
+tally = []
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
 pollster.workspace = true

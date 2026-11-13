@@ -64,6 +64,7 @@ fn env_query(s: Surf, seed: ptr<function, u32>, mis_spec: bool) -> Shadowed {
 // flat term instead (`bounce_light`); `mis_spec` is `env_query`'s weight
 // against a GGX sample the caller also takes.
 fn direct(s: Surf, seed: ptr<function, u32>, with_env: bool, mis_spec: bool) -> vec3<f32> {
+    tally(TALLY_SHADE, 1u);
     let rig = uses_rig();
     var sum = select(vec3<f32>(0.0), rig_fill(s), rig);
     for (var k = 0u; k < 4u; k++) {
@@ -78,6 +79,7 @@ fn direct(s: Surf, seed: ptr<function, u32>, with_env: bool, mis_spec: bool) -> 
             q = env_query(s, seed, mis_spec);
         }
         if (max(q.c.r, max(q.c.g, q.c.b)) > 0.0) {
+            tally_ray(TALLY_SHADOW + k, 5u + k);
             sum += q.c * visible(s.pos, q.dir, q.dist);
         }
     }
@@ -117,6 +119,7 @@ fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>, bounce: bool
     let lit = p.envmap != 0u || dot(p.env.rgb, p.env.rgb) > 0.0;
     if (p.glow == 0u && !lit) {
         let dir = cosine_dir(n, seed);
+        tally_ray(TALLY_AO, 3u);
         return env_at(dir) * mix(0.25, 1.0, visible(pos, dir, p.ao));
     }
     let sampled = p.env_cdf != 0u;
@@ -140,6 +143,7 @@ fn indirect(pos: vec3<f32>, n: vec3<f32>, seed: ptr<function, u32>, bounce: bool
         }
         through = false;
         min_pdf = min(min_pdf, pb);
+        tally_ray(TALLY_BOUNCE, 2u);
         let h = trace(org, dir, INF, false);
         if (h.tri == 0xffffffffu) {
             // Weighted against `env_query`, which samples the same world.

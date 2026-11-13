@@ -162,6 +162,21 @@ impl Kernel for Edge {
     const WGSL: &'static str = concat!(include_str!("wgsl/camera.wgsl"), include_str!("wgsl/view.wgsl"), include_str!("wgsl/outline.wgsl"));
 }
 
+// The counters' switch (`tally.wgsl`): live with the `tally` feature, a
+// constant `false` that folds every counter away without it.
+#[cfg(feature = "tally")]
+macro_rules! tally_wgsl {
+    () => {
+        include_str!("wgsl/tally_on.wgsl")
+    };
+}
+#[cfg(not(feature = "tally"))]
+macro_rules! tally_wgsl {
+    () => {
+        include_str!("wgsl/tally_off.wgsl")
+    };
+}
+const TALLY_FILE: &str = if cfg!(feature = "tally") { "tally_on.wgsl" } else { "tally_off.wgsl" };
 macro_rules! trace_wgsl {
     ($binds:literal) => {
         concat!(
@@ -177,6 +192,8 @@ macro_rules! trace_wgsl {
             include_str!("wgsl/pattern.wgsl"),
             include_str!("wgsl/mix.wgsl"),
             include_str!("wgsl/procedural.wgsl"),
+            tally_wgsl!(),
+            include_str!("wgsl/tally.wgsl"),
             include_str!("wgsl/bvh.wgsl"),
             include_str!("wgsl/view.wgsl"),
             include_str!("wgsl/util.wgsl"),
@@ -206,6 +223,8 @@ macro_rules! preview_wgsl {
             include_str!("wgsl/pattern.wgsl"),
             include_str!("wgsl/mix.wgsl"),
             include_str!("wgsl/procedural.wgsl"),
+            tally_wgsl!(),
+            include_str!("wgsl/tally.wgsl"),
             include_str!("wgsl/bvh.wgsl"),
             include_str!("wgsl/view.wgsl"),
             include_str!("wgsl/util.wgsl"),
@@ -228,6 +247,8 @@ macro_rules! direct_wgsl {
             include_str!($binds),
             include_str!($vis),
             include_str!("wgsl/texture.wgsl"),
+            tally_wgsl!(),
+            include_str!("wgsl/tally.wgsl"),
             include_str!("wgsl/bvh.wgsl"),
             include_str!("wgsl/view.wgsl"),
             include_str!("wgsl/util.wgsl"),
@@ -250,6 +271,8 @@ const TRACE_FILE_LIST_2: &[&str] = &[
     "pattern.wgsl",
     "mix.wgsl",
     "procedural.wgsl",
+    TALLY_FILE,
+    "tally.wgsl",
     "bvh.wgsl",
     "view.wgsl",
     "util.wgsl",
@@ -272,6 +295,8 @@ const TRACE_FILE_LIST_4: &[&str] = &[
     "pattern.wgsl",
     "mix.wgsl",
     "procedural.wgsl",
+    TALLY_FILE,
+    "tally.wgsl",
     "bvh.wgsl",
     "view.wgsl",
     "util.wgsl",

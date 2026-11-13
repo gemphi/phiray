@@ -153,7 +153,7 @@ impl Tracer {
             // a new buffer, which the device clears, nothing uploaded.
             let px = match self.px.take() {
                 Some(px) if self.size == (w, h) => px,
-                _ => GpuArray::zeroed(gpu, Self::PX_LEN * n as usize + 1),
+                _ => GpuArray::zeroed(gpu, Self::px_len(n as usize)),
             };
             self.pass.clear();
             self.vis = drawn.then(|| self.visibility(gpu, &cam, w, h));

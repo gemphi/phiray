@@ -121,6 +121,7 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
         d = vec3<f32>(dot(i0.xyz, dw), dot(i1.xyz, dw), dot(i2.xyz, dw));
     }
     let inv = safe_inv(d);
+    if (TALLY) { tally_insts++; }
     if (box_t(node(root), o, inv, (*best).t) >= INF) { return; }
     // One frame for the whole walk: the triangles share it, so they agree.
     let rs = ray_space(d);
@@ -129,6 +130,7 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
     var cur = root;
     loop {
         let nd = node(cur);
+        if (TALLY) { tally_nodes++; }
         if ((nd.li & LEAF) != 0u) {
             for (var id = nd.li & ~LEAF; id < nd.ri; id++) {
                 // Shadow rays pass glass and cut-out (alpha) surfaces.
@@ -137,6 +139,7 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
                     if (tf(m + 6u) > 0.5 || tf(m + 3u) < 0.5) { continue; }
                 }
                 let v = face(id);
+                if (TALLY) { tally_tris++; }
                 let h = tri_t(vert(v.x).p.xyz, vert(v.y).p.xyz, vert(v.z).p.xyz, o, rs);
                 if (h.x < (*best).t) {
                     *best = Hit(h.x, id, h.y, h.z, i);
@@ -165,7 +168,15 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
 
 // The top tree, over the instances' world bounds: each leaf names the
 // instances (`inst_order`) whose own trees the ray then walks.
+// Every ray goes through here, so the counters (`tally.wgsl`) see each
+// walk once; without the `tally` feature this is the walk and nothing else.
 fn trace(o: vec3<f32>, d: vec3<f32>, tmax: f32, first: bool) -> Hit {
+    tally_walk_begin();
+    let h = trace_top(o, d, tmax, first);
+    tally_walk_end(first);
+    return h;
+}
+fn trace_top(o: vec3<f32>, d: vec3<f32>, tmax: f32, first: bool) -> Hit {
     var best = Hit(tmax, 0xffffffffu, 0.0, 0.0, 0u);
     let inv = safe_inv(d);
     if (box_t(node(0u), o, inv, best.t) >= INF) { return best; }
@@ -174,6 +185,7 @@ fn trace(o: vec3<f32>, d: vec3<f32>, tmax: f32, first: bool) -> Hit {
     var cur = 0u;
     loop {
         let nd = node(cur);
+        if (TALLY) { tally_nodes++; }
         if ((nd.li & LEAF) != 0u) {
             for (var s = nd.li & ~(LEAF | INST); s < nd.ri; s++) {
                 trace_blas(inst_order(s), o, d, first, &best);

@@ -290,6 +290,11 @@ impl Tracer {
     /// or infinity: compositors treat it as "far away", and zero would read
     /// as "touching the lens".
     pub fn depth(&self, gpu: &Gpu) -> Vec<f32> {
+        // The final read, which a peek never takes: where the counters,
+        // when built in, go to the render log (`tally.rs`).
+        if let Some(t) = self.tally(gpu) {
+            print!("{}", t.report());
+        }
         let n = (self.size.0 * self.size.1) as usize;
         let words = self.px.as_ref().map(|o| o.read_first(gpu, 14 * n)).unwrap_or_default();
         let k = self.counts(gpu, n);

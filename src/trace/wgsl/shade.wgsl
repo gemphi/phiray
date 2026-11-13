@@ -62,6 +62,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         px[adapt_seen(i)] = 0u;
     }
     if (adapt_settled(i)) { return; }
+    tally_begin(i);
     let sp = frame_point(i);
     let su = sp.x;
     let sv = sp.y;
@@ -123,6 +124,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // invites the shader compiler to unroll this whole body that many times.
     let passes = see_through + through + 1u;
     for (var bounce = 0u; bounce < passes; bounce++) {
+        tally_ray(TALLY_CAMERA, min(bounce, 1u));
         let h = trace(o, d, INF, false);
         if (h.tri == 0xffffffffu) {
             if (bounce == 0u) {
@@ -229,6 +231,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (rnd(&seed) >= alpha) {
             n_see++;
             if (n_see > see_through) { break; }
+            tally(TALLY_CUTOUT, 1u);
             o = hit - past;
             continue;
         }
@@ -323,6 +326,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // below reuses it for the energy the reflection took.
         let fres = fresnel_of(s, cos_hi);
         if (!take_diffuse && glossy_on && dot(refl, ng) > 0.0 && cos_hi > 0.0 && cos_no > 0.0) {
+            tally_ray(TALLY_GLOSSY, select(4u, 9u, opaque < 1.0));
+            if (opaque < 1.0) { tally(TALLY_GLOSSY_GLASS, 1u); }
             let rh = trace(pos, refl, INF, false);
             var rc = env_at(refl);
             // A reflection that reaches the world is weighted against the
@@ -330,6 +335,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             // one that lands on geometry has no other estimator.
             var wg = 1.0;
             if (rh.tri != 0xffffffffu) {
+                tally(TALLY_REFLECT_HIT, 1u);
                 rc = bounce_light(rh, pos, refl, ggx_pdf(s, refl), &seed);
             } else if (p.env_cdf != 0u) {
                 let pg = ggx_pdf(s, refl);
@@ -346,6 +352,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (tw <= 0.0) { break; }
         n_through++;
         if (n_through > through) { break; }
+        tally(TALLY_GLASS, 1u);
         let eta = select(t.ior, 1.0 / t.ior, front);
         var nd = refract(d, n, eta);
         if (dot(nd, nd) < 1e-6) {
