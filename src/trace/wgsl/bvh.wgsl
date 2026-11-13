@@ -131,16 +131,14 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
         let nd = node(cur);
         if ((nd.li & LEAF) != 0u) {
             for (var id = nd.li & ~LEAF; id < nd.ri; id++) {
+                // Shadow rays pass glass and cut-out (alpha) surfaces.
+                if (first) {
+                    let m = mat_at(id);
+                    if (tf(m + 6u) > 0.5 || tf(m + 3u) < 0.5) { continue; }
+                }
                 let v = face(id);
                 let h = tri_t(vert(v.x).p.xyz, vert(v.y).p.xyz, vert(v.z).p.xyz, o, rs);
                 if (h.x < (*best).t) {
-                    // Shadow rays pass glass and cut-out (alpha) surfaces.
-                    // The triangle is tested first: most candidates miss,
-                    // and only a hit needs its material read.
-                    if (first) {
-                        let m = mat_word(v.w);
-                        if (tf(m + 6u) > 0.5 || tf(m + 3u) < 0.5) { continue; }
-                    }
                     *best = Hit(h.x, id, h.y, h.z, i);
                     if (first) { return; }
                 }
