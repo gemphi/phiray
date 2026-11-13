@@ -121,14 +121,13 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
         d = vec3<f32>(dot(i0.xyz, dw), dot(i1.xyz, dw), dot(i2.xyz, dw));
     }
     let inv = safe_inv(d);
-    if (box_t(node(root), o, inv, (*best).t) >= INF) { return; }
+    var nd = node(root);
+    if (box_t(nd, o, inv, (*best).t) >= INF) { return; }
     // One frame for the whole walk: the triangles share it, so they agree.
     let rs = ray_space(d);
     var stack: array<u32, 32>;
     var sp = 0u;
-    var cur = root;
     loop {
-        let nd = node(cur);
         if ((nd.li & LEAF) != 0u) {
             for (var id = nd.li & ~LEAF; id < nd.ri; id++) {
                 // Shadow rays pass glass and cut-out (alpha) surfaces.
@@ -144,22 +143,29 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
                 }
             }
         } else {
-            let tl = box_t(node(nd.li), o, inv, (*best).t);
-            let tr = box_t(node(nd.ri), o, inv, (*best).t);
+            // Each child is loaded once, for its box, and the one the walk
+            // goes to is kept rather than loaded again at the top.
+            let nl = node(nd.li);
+            let nr = node(nd.ri);
+            let tl = box_t(nl, o, inv, (*best).t);
+            let tr = box_t(nr, o, inv, (*best).t);
             if (tl < INF && tr < INF) {
-                let near = select(nd.ri, nd.li, tl <= tr);
-                let far = select(nd.li, nd.ri, tl <= tr);
-                stack[sp] = far;
+                if (tl <= tr) {
+                    stack[sp] = nd.ri;
+                    nd = nl;
+                } else {
+                    stack[sp] = nd.li;
+                    nd = nr;
+                }
                 sp++;
-                cur = near;
                 continue;
             }
-            if (tl < INF) { cur = nd.li; continue; }
-            if (tr < INF) { cur = nd.ri; continue; }
+            if (tl < INF) { nd = nl; continue; }
+            if (tr < INF) { nd = nr; continue; }
         }
         if (sp == 0u) { break; }
         sp--;
-        cur = stack[sp];
+        nd = node(stack[sp]);
     }
 }
 
@@ -168,34 +174,38 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
 fn trace(o: vec3<f32>, d: vec3<f32>, tmax: f32, first: bool) -> Hit {
     var best = Hit(tmax, 0xffffffffu, 0.0, 0.0, 0u);
     let inv = safe_inv(d);
-    if (box_t(node(0u), o, inv, best.t) >= INF) { return best; }
+    var nd = node(0u);
+    if (box_t(nd, o, inv, best.t) >= INF) { return best; }
     var stack: array<u32, 32>;
     var sp = 0u;
-    var cur = 0u;
     loop {
-        let nd = node(cur);
         if ((nd.li & LEAF) != 0u) {
             for (var s = nd.li & ~(LEAF | INST); s < nd.ri; s++) {
                 trace_blas(inst_order(s), o, d, first, &best);
                 if (first && best.tri != 0xffffffffu) { return best; }
             }
         } else {
-            let tl = box_t(node(nd.li), o, inv, best.t);
-            let tr = box_t(node(nd.ri), o, inv, best.t);
+            let nl = node(nd.li);
+            let nr = node(nd.ri);
+            let tl = box_t(nl, o, inv, best.t);
+            let tr = box_t(nr, o, inv, best.t);
             if (tl < INF && tr < INF) {
-                let near = select(nd.ri, nd.li, tl <= tr);
-                let far = select(nd.li, nd.ri, tl <= tr);
-                stack[sp] = far;
+                if (tl <= tr) {
+                    stack[sp] = nd.ri;
+                    nd = nl;
+                } else {
+                    stack[sp] = nd.li;
+                    nd = nr;
+                }
                 sp++;
-                cur = near;
                 continue;
             }
-            if (tl < INF) { cur = nd.li; continue; }
-            if (tr < INF) { cur = nd.ri; continue; }
+            if (tl < INF) { nd = nl; continue; }
+            if (tr < INF) { nd = nr; continue; }
         }
         if (sp == 0u) { break; }
         sp--;
-        cur = stack[sp];
+        nd = node(stack[sp]);
     }
     return best;
 }
