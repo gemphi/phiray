@@ -325,7 +325,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Fresnel at the microfacet, not the macro normal. The glass path
         // below reuses it for the energy the reflection took.
         let fres = fresnel_of(s, cos_hi);
-        if (!take_diffuse && glossy_on && dot(refl, ng) > 0.0 && cos_hi > 0.0 && cos_no > 0.0) {
+        // Glass reflects OR refracts, as Cycles' glass closure samples one
+        // of the two by its Fresnel (`bsdf_microfacet_sample` for
+        // `CLOSURE_BSDF_MICROFACET_GGX_GLASS_ID`). Both were traced at every
+        // glass hit: the reflection ray, the light at what it met with that
+        // point's own shadow ray, and the refracted ray on. The refraction
+        // is taken with the chance of the light it carries, `tw (1 - F)`, and
+        // each side divided by its chance, so the image is the same in
+        // expectation. Past the transmission limit there is no refraction to
+        // take, and the reflection keeps all of it, as before.
+        let tw = t.trans * (1.0 - metal);
+        let fl = dot(fres, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let p_through = select(0.0, clamp(tw * (1.0 - fl), 0.0, 1.0), tw > 0.0 && n_through < through);
+        let refract_on = p_through > 0.0 && rnd(&seed) < p_through;
+        if (!refract_on && !take_diffuse && glossy_on && dot(refl, ng) > 0.0 && cos_hi > 0.0 && cos_no > 0.0) {
             tally_ray(TALLY_GLOSSY, select(4u, 9u, opaque < 1.0));
             if (opaque < 1.0) { tally(TALLY_GLOSSY_GLASS, 1u); }
             let rh = trace(pos, refl, INF, false);
@@ -342,16 +355,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let pe = env_pdf(refl);
                 wg = pg * pg / max(pg * pg + pe * pe, 1e-12);
             }
-            bounced += fres * rc * ggx_weight(ggx_a * ggx_a, max(dot(n, v), 1e-4), cos_no) * wg / (1.0 - p_diffuse);
+            bounced += fres * rc * ggx_weight(ggx_a * ggx_a, max(dot(n, v), 1e-4), cos_no) * wg / ((1.0 - p_diffuse) * (1.0 - p_through));
         }
         c += clamp_light(bounced, p.limit.y);
         col += thr * c;
 
         // Glass: refract and keep going, tinted by the base colour.
-        let tw = t.trans * (1.0 - metal);
-        if (tw <= 0.0) { break; }
+        if (!refract_on) { break; }
         n_through++;
-        if (n_through > through) { break; }
         tally(TALLY_GLASS, 1u);
         let eta = select(t.ior, 1.0 / t.ior, front);
         var nd = refract(d, n, eta);
@@ -362,7 +373,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             // glass edge seen from inside.
             nd = reflect(d, n);
             o = hit + past;
-            thr *= tw;
+            thr *= tw / p_through;
         } else {
             o = hit - past;
             // Each crossing tints by the square root of the base colour
@@ -370,7 +381,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             // so in and out again comes to the base colour once. Tinting
             // by the whole base at each face made glass its colour squared
             // — deep purple where Blender draws lilac.
-            thr *= tw * sqrt(base) * (vec3<f32>(1.0) - fres);
+            thr *= tw * sqrt(base) * (vec3<f32>(1.0) - fres) / p_through;
         }
         d = cone_dir(normalize(nd), s.rough * s.rough, &seed);
         if (max(thr.r, max(thr.g, thr.b)) < 0.01) { break; }
