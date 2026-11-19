@@ -1,3 +1,16 @@
+// The walk. Two things keep its inner loop short (2026-11-10):
+//
+// 1. A shadow ray tests the triangle before it reads the material: the
+//    material is asked only of a triangle the ray meets.
+// 2. Each node is loaded once a step: the child loaded for its box is the
+//    one carried down, and only a node popped from the stack is loaded again.
+//
+// No hit, order or number differs from the walk these replaced: the image
+// hash is the same. Timed against it 2026-11-19 (`examples/walk_cost.rs`,
+// 980,000 triangles, 1280 x 720, GTX 1660 Ti on Vulkan): no measurable
+// change, about 60 ms a sample either way. The driver's compiler already
+// folded the repeated loads; these are kept for the adapters that do not.
+
 fn box_t(n: Node, o: vec3<f32>, inv: vec3<f32>, best: f32) -> f32 {
     let t1 = (n.lo - o) * inv;
     let t2 = (n.hi - o) * inv;
@@ -121,45 +134,58 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
         d = vec3<f32>(dot(i0.xyz, dw), dot(i1.xyz, dw), dot(i2.xyz, dw));
     }
     let inv = safe_inv(d);
-    if (box_t(node(root), o, inv, (*best).t) >= INF) { return; }
+    let top = node(root);
+    if (box_t(top, o, inv, (*best).t) >= INF) { return; }
     // One frame for the whole walk: the triangles share it, so they agree.
     let rs = ray_space(d);
     var stack: array<u32, 32>;
     var sp = 0u;
-    var cur = root;
+    // The node in hand. A child is loaded once, for its box, and carried
+    // here when the walk goes down into it; only a node popped from the
+    // stack is loaded again. Whole-value assignment and fixed fields only,
+    // never a runtime index: see `ray_axes` for what that costs.
+    var nd = top;
     loop {
-        let nd = node(cur);
         if ((nd.li & LEAF) != 0u) {
             for (var id = nd.li & ~LEAF; id < nd.ri; id++) {
-                // Shadow rays pass glass and cut-out (alpha) surfaces.
-                if (first) {
-                    let m = mat_at(id);
-                    if (tf(m + 6u) > 0.5 || tf(m + 3u) < 0.5) { continue; }
-                }
                 let v = face(id);
                 let h = tri_t(vert(v.x).p.xyz, vert(v.y).p.xyz, vert(v.z).p.xyz, o, rs);
                 if (h.x < (*best).t) {
+                    // Shadow rays pass glass and cut-out (alpha) surfaces.
+                    // Asked only of a triangle the ray meets: most of a
+                    // leaf's candidates are missed, and the material is
+                    // three reads.
+                    if (first) {
+                        let m = mat_at(id);
+                        if (tf(m + 6u) > 0.5 || tf(m + 3u) < 0.5) { continue; }
+                        *best = Hit(h.x, id, h.y, h.z, i);
+                        return;
+                    }
                     *best = Hit(h.x, id, h.y, h.z, i);
-                    if (first) { return; }
                 }
             }
         } else {
-            let tl = box_t(node(nd.li), o, inv, (*best).t);
-            let tr = box_t(node(nd.ri), o, inv, (*best).t);
+            let nl = node(nd.li);
+            let nr = node(nd.ri);
+            let tl = box_t(nl, o, inv, (*best).t);
+            let tr = box_t(nr, o, inv, (*best).t);
             if (tl < INF && tr < INF) {
-                let near = select(nd.ri, nd.li, tl <= tr);
-                let far = select(nd.li, nd.ri, tl <= tr);
-                stack[sp] = far;
+                if (tl <= tr) {
+                    stack[sp] = nd.ri;
+                    nd = nl;
+                } else {
+                    stack[sp] = nd.li;
+                    nd = nr;
+                }
                 sp++;
-                cur = near;
                 continue;
             }
-            if (tl < INF) { cur = nd.li; continue; }
-            if (tr < INF) { cur = nd.ri; continue; }
+            if (tl < INF) { nd = nl; continue; }
+            if (tr < INF) { nd = nr; continue; }
         }
         if (sp == 0u) { break; }
         sp--;
-        cur = stack[sp];
+        nd = node(stack[sp]);
     }
 }
 
@@ -168,34 +194,39 @@ fn trace_blas(i: u32, ow: vec3<f32>, dw: vec3<f32>, first: bool, best: ptr<funct
 fn trace(o: vec3<f32>, d: vec3<f32>, tmax: f32, first: bool) -> Hit {
     var best = Hit(tmax, 0xffffffffu, 0.0, 0.0, 0u);
     let inv = safe_inv(d);
-    if (box_t(node(0u), o, inv, best.t) >= INF) { return best; }
+    let top = node(0u);
+    if (box_t(top, o, inv, best.t) >= INF) { return best; }
     var stack: array<u32, 32>;
     var sp = 0u;
-    var cur = 0u;
+    var nd = top;
     loop {
-        let nd = node(cur);
         if ((nd.li & LEAF) != 0u) {
             for (var s = nd.li & ~(LEAF | INST); s < nd.ri; s++) {
                 trace_blas(inst_order(s), o, d, first, &best);
                 if (first && best.tri != 0xffffffffu) { return best; }
             }
         } else {
-            let tl = box_t(node(nd.li), o, inv, best.t);
-            let tr = box_t(node(nd.ri), o, inv, best.t);
+            let nl = node(nd.li);
+            let nr = node(nd.ri);
+            let tl = box_t(nl, o, inv, best.t);
+            let tr = box_t(nr, o, inv, best.t);
             if (tl < INF && tr < INF) {
-                let near = select(nd.ri, nd.li, tl <= tr);
-                let far = select(nd.li, nd.ri, tl <= tr);
-                stack[sp] = far;
+                if (tl <= tr) {
+                    stack[sp] = nd.ri;
+                    nd = nl;
+                } else {
+                    stack[sp] = nd.li;
+                    nd = nr;
+                }
                 sp++;
-                cur = near;
                 continue;
             }
-            if (tl < INF) { cur = nd.li; continue; }
-            if (tr < INF) { cur = nd.ri; continue; }
+            if (tl < INF) { nd = nl; continue; }
+            if (tr < INF) { nd = nr; continue; }
         }
         if (sp == 0u) { break; }
         sp--;
-        cur = stack[sp];
+        nd = node(stack[sp]);
     }
     return best;
 }

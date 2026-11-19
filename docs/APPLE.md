@@ -30,7 +30,7 @@ headers, which are on disk. Every Apple citation below is from them.
   readback.** The code's own figures: 18 ms a sample for a 12-triangle cube
   at 1920x1080 (B `slices.rs:48-54`) against about 4 s a sample for pose 26
   (B `stepwise.rs:155-156`).
-- Two fixes in the inner loop of `bvh.wgsl`, one day each, touch every ray.
+- Two fixes in the inner loop of `bvh.wgsl`, one hour each, touch every ray.
 - The viewport never turns adaptive sampling on. The kernels exist.
 - Material Preview's kernel takes four minutes to compile; the path tracer
   had the same disease and was cured.
@@ -50,7 +50,15 @@ headers, which are on disk. Every Apple citation below is from them.
 
 Most gain for the effort first. All work on Windows wgpu today unless said.
 
-| # | Change | Where the time goes today | Expected effect | Days | Risk |
+Rows 1 and 2 are in `bvh.wgsl` and were timed 2026-11-19 with
+`examples/walk_cost.rs` (980,000 triangles, 1280 x 720, GTX 1660 Ti on
+Vulkan, the old and new walk run in turn six times each): the image hash is
+the same and the GPU time a sample is not measurably different, about 60 ms
+either way. The "all opaque" instance bit of row 1 is not built. The same
+runs showed the GPU in two states, about 60 ms and about 210 ms a sample for
+either walk, so one run alone proves nothing on this machine.
+
+| # | Change | Where the time goes today | Expected effect | hours | Risk |
 |---|---|---|---|---|---|
 | 1 | **Shadow rays test the triangle before reading its material**, and an "all opaque" instance bit skips the read outright | For an any-hit ray each leaf candidate does `mat_at(id)` and two more reads before `tri_t` (S `bvh.wgsl:135-140`, checked). Up to 3 shadow rays a shading point (S `integrate.wgsl:69-82`) and 4 diffuse bounces by default, so most rays on a path are any-hit | Fewer dependent loads on most rays; same image. This is Apple's opaque flag (HM `MTLAccelerationStructure.h:144`) | 1 | Low |
 | 2 | **Stop loading each node twice** | Three `node()` loads a step: the node, then both children for their box tests, then the chosen child again at the top of the loop (S `bvh.wgsl:131,147-148`, and `:176,183-184`, checked). Each goes through the chunk-select chain (S `bind4.wgsl:24-30`) | About a third fewer node loads on descent | 1-2 | Low |
