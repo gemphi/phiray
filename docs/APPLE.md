@@ -58,6 +58,12 @@ either way. The "all opaque" instance bit of row 1 is not built. The same
 runs showed the GPU in two states, about 60 ms and about 210 ms a sample for
 either walk, so one run alone proves nothing on this machine.
 
+Row 3 is done (2026-11-19): phiber's render thread hands the viewport's own
+adaptive rows to `Tracer::set_adaptive` in Rendered mode and ends a view when
+`Tracer::unconverged` reads zero (`rendered/converge.rs`). A cube settles at
+sample 47 of any Max Samples. Not measured on a heavy scene, and `dilate`
+and `gather` still run every sample.
+
 | # | Change | Where the time goes today | Expected effect | hours | Risk |
 |---|---|---|---|---|---|
 | 1 | **Shadow rays test the triangle before reading its material**, and an "all opaque" instance bit skips the read outright | For an any-hit ray each leaf candidate does `mat_at(id)` and two more reads before `tri_t` (S `bvh.wgsl:135-140`, checked). Up to 3 shadow rays a shading point (S `integrate.wgsl:69-82`) and 4 diffuse bounces by default, so most rays on a path are any-hit | Fewer dependent loads on most rays; same image. This is Apple's opaque flag (HM `MTLAccelerationStructure.h:144`) | 1 | Low |
