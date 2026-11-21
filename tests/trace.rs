@@ -63,7 +63,7 @@ fn renders_box_floor_and_sky() {
             (px, done) = tr.render(&gpu, camera(persp), w, h);
             frames += 1;
         }
-        assert_eq!(frames, phiray::Tracer::SAMPLES);
+        assert_eq!(frames, phiray::Tracer::SAMPLE_COUNT);
         assert_eq!(px.len(), (w * h * 4) as usize);
         let at = |x: u32, y: u32| {
             let i = ((y * w + x) * 4) as usize;
@@ -190,7 +190,7 @@ fn split_buffers_render_the_same() {
         assert_eq!(whole, render(1 << 20, 4));
         // 832 bytes: the data table — one 164-word material, the atlas
         // and table header words, and the one instance's 42 words
-        // (`INSTANCE_WORDS` + its TLAS and draw slots) — is the tightest
+        // (`INSTANCE_LEN` + its TLAS and draw slots) — is the tightest
         // binding. Keep the byte boundary explicit so a record-layout
         // change fails with the size it needs rather than silently ceasing
         // to test the four-way split.

@@ -1,13 +1,13 @@
 //! A mesh: geometry uploaded once — a run of faces and vertices in the
 //! scene's arrays, kept in its own space under a tree of its own
-//! (`Trees::blas`) — that any number of instances place in the world
+//! (`Forest::blas`) — that any number of instances place in the world
 //! (`instance.rs`). Cycles keeps the same split: one `Geometry`
 //! (`scene/geometry.cpp`) under many `Object`s (`scene/object.cpp`), each
 //! with its own transform, so a collection instanced a thousand times
 //! holds its triangles and its BVH once. Roadmap §4.4, Step 1.
 
 /// Geometry, uploaded once: a range of faces and vertices, and the box
-/// they fill. Its tree's root is the trees' business (`Trees::roots`).
+/// they fill. Its tree's root is the trees' business (`Forest::roots`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Mesh {
     /// Its faces, `[lo, hi)`, in the scene's face array.

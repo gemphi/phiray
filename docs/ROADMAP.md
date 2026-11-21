@@ -68,7 +68,7 @@ Section 4 has the mapping onto Solid, Preview and Rendered and a port plan.
 | `lib.rs`, `mode.rs`, `kernel.rs` | 177 | - | Entry `Ray`, `Mode`, the `Kernel` trait and `Dispatch` |
 | `bvh/` | 1,415 | (inline) | CPU LBVH and SAH builders, GPU LBVH build (Morton, radix sort, Karras) and refit |
 | `gpu/` | 1,013 | - | The device, buffers, recorded passes, adapter ranking, one raster prepass |
-| `kernels/` | 549 | 108 | Skinning, MPS-style image/matrix kernels, a-trous denoiser |
+| `kernel/` | 549 | 108 | Skinning, MPS-style image/matrix kernels, a-trous denoiser |
 | `trace/` | 4,420 | 5,674 | The `Tracer`: every viewport mode, scene upload, instancing, lights, textures, effects |
 | **Total `src/`** | **7,574** | **5,782** | plus `smaa/area.bin` (a 104 KB binary table, not code) |
 | `tests/` (33 files) | 4,741 | - | GPU against CPU and against Blender-derived truths; skip with no adapter |
@@ -83,8 +83,8 @@ baked down to phiray's fixed material record) is 4,309 lines.
 **Core (`lib.rs` 35, `mode.rs` 40, `kernel.rs` 102).** `Mode` has four
 values, not three: `Wire`, `Solid`, `Preview`, `Rendered`, mapped to Blender's
 `View3DShading.type` names. `Kernel` is the compute model taken from Warp:
-`NAME`, `WGSL`, `BINDS` (read/write per storage binding after the params
-uniform), `Params: Pod` starting with `n, groups_x`; 256-wide workgroups,
+`NAME`, `WGSL`, `BIND_LIST` (read/write per storage binding after the params
+uniform), `Param: Pod` starting with `n, groups_x`; 256-wide workgroups,
 x-then-y spill past 65,535 groups, a WGSL prelude giving `item(gid,
 groups_x)`. Pipelines are cached by an FNV-1a hash of name, entry and source.
 
@@ -97,7 +97,7 @@ groups_x)`. Pipelines are cached by an FNV-1a hash of name, entry and source.
   `build_compact` (breadth-first, drops the sort arrays early); CPU refit.
 - `sah.rs` (189): binned SAH builder (16 bins, Wald 2007). This is the tree the
   tracer actually walks; the Morton tree is the fast GPU-mirrored one.
-- `kernels.rs` (170): WGSL `Morton`, `Karras`, `Refit` (Jacobi refit: `depth + 1`
+- `kernel.rs` (170): WGSL `Morton`, `Karras`, `Refit` (Jacobi refit: `depth + 1`
   ping-pong passes, no atomics).
 - `radix.rs` (202), `sort.rs` (183), `spread.rs` (32): a GPU LSD radix sort on
   a 64-bit `(code, index)` key, so the atomic scatter can race and the result
@@ -106,7 +106,7 @@ groups_x)`. Pipelines are cached by an FNV-1a hash of name, entry and source.
 - `gpu.rs` (105): `GpuBvh`: codes, sort and Karras links on the GPU; leaf
   packing still on the CPU (one readback of the order per build); refit per
   frame by replay; `update` refits when the primitive count is unchanged.
-- `shape.rs` (52) compaction, `tests.rs` (116), `mod.rs` (46).
+- `shape.rs` (52) compaction, `test.rs` (116), `mod.rs` (46).
 
 **`gpu/` (1,013).**
 - `mod.rs` (277): one shared `Gpu` per process (device, queue, adapter info),
@@ -123,7 +123,7 @@ groups_x)`. Pipelines are cached by an FNV-1a hash of name, entry and source.
   Wire on hardware adapters.
 - `shared.rs` (61): static device on desktop, thread-local on wasm.
 
-**`kernels/` (549 Rust, 108 WGSL).**
+**`kernel/` (549 Rust, 108 WGSL).**
 - `skin.rs` (91): linear blend skinning with any number of influences (CSR),
   B-Bone segment blending, plus its CPU twin. phiber uses it through
   `phiber/src/scene/skin.rs`, with the CPU taking meshes under 20,000 vertices.
@@ -138,12 +138,12 @@ groups_x)`. Pipelines are cached by an FNV-1a hash of name, entry and source.
   sample so a new view never waits), passes read back (radiance, display,
   albedo, normal, depth), denoise, outline, adaptive sampling control.
 - `kernel.rs` (784): the data types: `Tri`, the large `Camera` uniform, up to
-  `LIGHTS = 32` file lights, `Atlas` (every texture in one storage buffer with
+  `MAX_LIGHT = 32` file lights, `Atlas` (every texture in one storage buffer with
   a CPU-built mip chain, sampled by hand), environment CDF.
 - `scene.rs` (341): compact scene: 32-byte shared vertices, 16-byte faces,
   material table. LAND (7.2 M triangles) and FLOWER-CITY (7.6 M) render;
   20 M-triangle files are refused on a 128 MB binding limit.
-- `mesh.rs`, `instance.rs`, `trees.rs`, `pose.rs`: one SAH tree per mesh
+- `mesh.rs`, `instance.rs`, `forest.rs`, `pose.rs`: one SAH tree per mesh
   in its own space plus a top tree over the instances' world bounds; a
   mesh is placed by any number of instances (`Scene::place`), so a
   collection instanced a thousand times holds its faces, vertices and
@@ -153,7 +153,7 @@ groups_x)`. Pipelines are cached by an FNV-1a hash of name, entry and source.
   the instance count. Moving an object re-uploads the instance table and
   top tree only (`reinstance`); moved vertices refit that mesh's tree
   (`repose`); `retree` rebuilds once motion stops. The raster prepass is
-  one instanced draw a mesh (`Trees::draws`, `@builtin(instance_index)`).
+  one instanced draw a mesh (`Forest::draws`, `@builtin(instance_index)`).
 - `mat.rs` (83), `proc.rs` (242): the material record (base colour,
   roughness, metallic, transmission, IOR, emission, bump, normal map, three
   texture maps, SSS weight and radius, sheen, coat, anisotropy, one Mix Shader
@@ -161,7 +161,7 @@ groups_x)`. Pipelines are cached by an FNV-1a hash of name, entry and source.
 - `ibl/` (322): environment irradiance as 9 spherical-harmonic coefficients and
   GGX-prefiltered levels, for Material Preview.
 - `taa.rs` (277), `smaa.rs` (46), `outline.rs` (115), `blue_noise.rs` (114),
-  `hash.rs` (105), `srgb.rs` (47), `visible.rs` (64), `lamps.rs` (37):
+  `hash.rs` (105), `srgb.rs` (47), `visible.rs` (64), `lamp.rs` (37):
   Workbench's jittered AA and Blackman-Harris gather, SMAA tables, selection
   outline, EEVEE's blue noise, Blender's object-colour hash, sRGB, prepass
   wiring, emitter CDF.
@@ -173,7 +173,7 @@ The WGSL, grouped:
 
 | Group | Lines | Files |
 |---|---:|---|
-| Path tracer | 1,096 | `shade.wgsl` (main loop, DOF with bladed bokeh, sample clamp), `light.wgsl` (GGX VNDF, lamps, mesh emitters, env importance sampling, MIS, indirect bounces) |
+| Path tracer | 1,096 | `shade.wgsl` (main loop, DOF with bladed bokeh, sample clamp), `brdf.wgsl`, `light.wgsl`, `integrate.wgsl` (GGX VNDF, lamps, mesh emitters, env importance sampling, MIS, indirect bounces) |
 | Cycles texture nodes | 1,294 | `noise`, `voronoi`, `pattern` (checker, brick, gradient, magic, wave), `gabor`, `math` (all 41 ops), `hash`, `procedural` (slots, mapping, bump) |
 | Workbench (Solid, Wire) | 1,017 | `solid`, `workbench` (studio rig, MatCap), `wire`, `fx` (cavity SSAO, curvature, object outline), `dof` |
 | Anti-aliasing | 491 | `taa`, `smaa`, `smaa_lib` |
@@ -259,7 +259,7 @@ side of an animated simulation is in place; the simulation is not.
 
 #### Where it lives
 
-A `sim` module in phiray (`phiray/src/sim/`), next to `bvh/` and `kernels/`,
+A `sim` module in phiray (`phiray/src/sim/`), next to `bvh/` and `kernel/`,
 and a `physics` reader in phiphx (`phiphx/src/blend/physics/`). Reasons:
 
 - The solver needs exactly what phiray already has: `Kernel`, `Pass` replay,
@@ -536,7 +536,7 @@ beyond gravity and effector weights, destruction.
 
 #### Kernels and CPU twins
 
-Every kernel follows `kernels/skin.rs`: a `Kernel` impl with its WGSL, and a
+Every kernel follows `kernel/skin.rs`: a `Kernel` impl with its WGSL, and a
 `cpu` function over the same `Pod` slices that the tests compare against.
 
 | Kernel | Items | Reads | Writes |
@@ -601,7 +601,7 @@ CPU does not.
 
 #### Tests
 
-Same style as `tests/bvh.rs` and `tests/emitters.rs`: GPU against CPU twin,
+Same style as `tests/bvh.rs` and `tests/emitter.rs`: GPU against CPU twin,
 and both against closed forms or Blender.
 
 - free fall against `x0 + v0 t + g t^2 / 2`; pendulum period; spring
@@ -646,7 +646,7 @@ system; trying it would stall everything else.
 | Physics | `PhysicsBodyComponent` (dynamic, static, kinematic), `CollisionComponent` shapes (box, sphere, capsule, convex, mesh), joints (fixed, spherical, revolute, prismatic), collision events | None. `crates/apple` (not built) has API-shaped structs and a toy cloth | All | As section 5 |
 | Anchors | `AnchorEntity` (plane, image, face, body, world) on ARKit tracking | None; `crates/apple/.../anchor_entity.rs` is structs only | Camera tracking stack | Out of scope for a desktop Blender-style app |
 | Shadows | Grounding and dynamic shadows | Ray-traced | - | - |
-| Compute libraries | MPS (convolution, bilateral, matrix multiply), MetalFX upscaling, Metal ray tracing | `kernels/image.rs` has the three MPS kernels in WGSL with CPU twins; own BVH traversal | Upscaling; hardware RT | Upscaler 10-15 d; hardware RT as above |
+| Compute libraries | MPS (convolution, bilateral, matrix multiply), MetalFX upscaling, Metal ray tracing | `kernel/image.rs` has the three MPS kernels in WGSL with CPU twins; own BVH traversal | Upscaling; hardware RT | Upscaler 10-15 d; hardware RT as above |
 | Platform | Metal only, tuned per Apple GPU | wgpu across Vulkan, Metal, DX12, WebGPU; `examples/metal_probe.rs` | Per-platform tuning | As needed |
 
 ### 3.3 Against Blender (the thing phiber imitates)
@@ -659,7 +659,7 @@ system; trying it would stall everything else.
 | Cycles (Rendered) | Path tracing, light paths and bounce limits, MIS, adaptive sampling, sample clamp, caustics and filter glossy, transparent film | All present (`shade.wgsl`, `light.wgsl`, `adapt.wgsl`) | - | - |
 | Cycles | Light tree | Power CDF over up to 32 lamps and emissive faces | Light tree | 8-12 d |
 | Cycles | Volumes (world and object, VDB) | None | Homogeneous volumes; VDB grids | 8-12 d; VDB 20+ d |
-| Cycles | Random-walk SSS | Wrap-lighting approximation (`scatter_bleed`, `sss_tint` in `light.wgsl`) | Real subsurface transport | 8-12 d |
+| Cycles | Random-walk SSS | Wrap-lighting approximation (`scatter_bleed`, `sss_tint` in `brdf.wgsl`) | Real subsurface transport | 8-12 d |
 | Cycles | Hair and curves | None (triangles only) | Curve primitive and intersection | 10-15 d |
 | Cycles | Motion blur | None | Time-sampled transforms and refit per time step | 15+ d |
 | Cycles | True displacement, adaptive subdivision | Bump only (procedural bump slot, normal maps) | Displacement at load | 10-15 d |
@@ -756,7 +756,7 @@ changing every substep, and contact and joint overlays.
 split in two (`mesh.rs`, `instance.rs`); the GPU record keeps its 40 words
 with the mesh's root, face range and texture space copied in and the mesh
 id in word 38, so a hit reads one record. The light table lists an
-emissive face once an instance (`lamps.rs`), the raster target carries the
+emissive face once an instance (`lamp.rs`), the raster target carries the
 instance in its second word with the barycentrics packed into the third
 (`raster.wgsl`), and phiphx's collection instances share their member's
 `Arc<SceneMesh>` (`scene/share.rs`), which phiber's scene build keys on
@@ -790,9 +790,9 @@ each) flagged in the leaf, for large particle counts.
 - `Place` kernel (Warp's `update_vbo_transforms`): reads `Body` poses and a
   per-instance `Local { offset: [[f32; 4]; 3], scale: [f32; 3], body: i32 }`,
   writes the instance record (world matrix and the inverse the traversal
-  needs, `INSTANCE_WORDS = 40`) and the instance's world AABB.
+  needs, `INSTANCE_LEN = 40`) and the instance's world AABB.
 - Top tree: refit on the GPU from those AABBs with the existing `Refit`
-  kernel, instead of `Trees::retlas` on the CPU plus an upload; rebuild on the
+  kernel, instead of `Forest::retlas` on the CPU plus an upload; rebuild on the
   GPU every few frames (it is small).
 - `Points` kernel (Warp's `update_points_positions`) and `Segments` kernel
   (Warp's `update_line_transforms`). For segments, build the basis with the
@@ -802,7 +802,7 @@ each) flagged in the leaf, for large particle counts.
 **Step 4. Deformable vertices written on the GPU (4-6 d).** A kernel writes
 particle positions into the tracer's vertex buffer range of that mesh (32-byte
 vertices: position plus packed normal and UV), addressed through the same
-2- or 4-binding split as `binds2.wgsl`/`binds4.wgsl`. Normals: Warp uses float
+2- or 4-binding split as `bind2.wgsl`/`bind4.wgsl`. Normals: Warp uses float
 `atomic_add`; WGSL has none, so use the mesh's static vertex-to-face CSR and
 sum adjacent face normals per vertex in a fixed order. Then refit that mesh's
 tree on the GPU (today `repose` refits on the CPU with `Bvh::refit_slots` and
@@ -994,11 +994,11 @@ number only one substep count could meet.
 | `README.md` tree | five source areas | also `ibl`, `taa`, `smaa`, `outline`, `proc`, `instance`, `pose`, `denoise`, `image`, and `Mode::Wire` |
 | `src/lib.rs`, `mode.rs:7` | "Three modes"; Solid "phiber canvas today" | Four modes; Solid is in phiray |
 | `trace/mod.rs:1` | "primary ray, sun with shadow, short-range ambient occlusion, sky gradient" | A full path tracer and three more modes |
-| `trace/kernel.rs:295` | MatCap "drawn as Studio"; Texture colour "as Material" | `solid.wgsl:69` samples the MatCap; `solid.wgsl:34` samples the texture |
-| `jobs.md` | "4 sampled per pixel" | One file lamp per shading point picked by power, plus one emitter-triangle and one environment sample (`light.wgsl` `direct`) |
+| `trace/camera.rs:142` | MatCap "drawn as Studio"; Texture colour "as Material" | `solid.wgsl:69` samples the MatCap; `solid.wgsl:34` samples the texture |
+| `jobs.md` | "4 sampled per pixel" | One file lamp per shading point picked by power, plus one emitter-triangle and one environment sample (`integrate.wgsl` `direct`) |
 | `jobs.md` | "today sort/pack run on the CPU" | Sort is on the GPU (`bvh/radix.rs`, `bvh/sort.rs`); only packing is on the CPU |
-| `jobs.md` | "Up to 16 file lights" | `LIGHTS = 32` (`trace/kernel.rs:485`) |
-| `jobs.md` | Instancing (BVH per mesh plus top level) is a todo | A tree per object plus a top tree exists (`instance.rs`, `trees.rs`); geometry is still not shared |
+| `jobs.md` | "Up to 16 file lights" | `MAX_LIGHT = 32` (`trace/camera.rs:332`) |
+| `jobs.md` | Instancing (BVH per mesh plus top level) is a todo | A tree per object plus a top tree exists (`instance.rs`, `forest.rs`); geometry is still not shared |
 | `reference/warp/ANALYSIS.md` section 7 | Solid "nothing on GPU yet"; Preview "wgpu raster" | Both on the GPU, both compute ray casts |
 | This audit's brief | phiphx reads Blender's rigid body and cloth settings | It reads none; `report.rs` lists modifier names only |
 | This audit's brief | Warp's viewer has shadows | It has none |

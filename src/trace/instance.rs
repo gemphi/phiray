@@ -1,6 +1,6 @@
 //! An instance: one placement of a mesh in the world. The mesh keeps its
 //! faces and vertices in its own space under a tree of its own
-//! (`mesh.rs`, `Trees::blas`), and the world holds the instances under a
+//! (`mesh.rs`, `Forest::blas`), and the world holds the instances under a
 //! tree over their world bounds (`tlas`, `Tracer::with_chunks`). Many
 //! instances may name one mesh — a collection instanced a thousand times
 //! uploads its triangles once (Cycles' `Object` over a shared `Geometry`,
@@ -16,7 +16,7 @@ use super::mesh::Mesh;
 use crate::bvh::Aabb;
 
 /// How many words one instance takes in the data table (`inst_word`).
-pub const INSTANCE_WORDS: usize = 40;
+pub const INSTANCE_LEN: usize = 40;
 
 /// One placement of a mesh.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -121,8 +121,8 @@ impl Instance {
     /// nothing), whether it casts a shadow and whether it mirrors, its
     /// object colour and its name hash, the mesh's texture space, and the
     /// mesh's id. The mesh's words are copied in so a hit reads one record.
-    pub fn words(&self, blas_root: u32, mesh: &Mesh) -> [u32; INSTANCE_WORDS] {
-        let mut w = [0u32; INSTANCE_WORDS];
+    pub fn words(&self, blas_root: u32, mesh: &Mesh) -> [u32; INSTANCE_LEN] {
+        let mut w = [0u32; INSTANCE_LEN];
         let m = &self.world;
         for r in 0..3 {
             for c in 0..4 {

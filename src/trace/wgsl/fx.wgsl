@@ -17,7 +17,7 @@
 
 const TAU: f32 = 6.2831853;
 // `CavityEffect::max_samples_`.
-const MAX_SAMPLES: u32 = 512u;
+const MAX_SAMPLE: u32 = 512u;
 
 // Pixel `(x, y)` clamped to the image, as a texture fetch at its edge is.
 fn at(x: i32, y: i32) -> u32 {
@@ -69,7 +69,7 @@ fn radical_inverse(n: u32) -> f32 {
 // factors applied.
 fn cavity(i: u32, x: i32, y: i32) -> vec2<f32> {
     let ssao_samples = p.ssao.x;
-    let sample_count = min(p.ssao.y * ssao_samples, MAX_SAMPLES);
+    let sample_count = min(p.ssao.y * ssao_samples, MAX_SAMPLE);
     let max_iter = max(sample_count / ssao_samples, 1u);
     let run = p.frame % max_iter;
     let start = ssao_samples * run;
@@ -101,7 +101,7 @@ fn cavity(i: u32, x: i32, y: i32) -> vec2<f32> {
 
     var cavities = 0.0;
     var edges = 0.0;
-    for (var k = start; k < end && k < MAX_SAMPLES; k++) {
+    for (var k = start; k < end && k < MAX_SAMPLE; k++) {
         // The disk sample: its direction and its distance from the centre
         // (more of them near it, so near the shadow).
         let it_add = f32(k / ssao_samples) * 0.499;

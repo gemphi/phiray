@@ -14,7 +14,7 @@
 // 256 neighbouring pixels at most, in the order they lie — the next
 // sample's warps keep their rays close together.
 //
-// Words (`Tracer::PX_WORDS`): the list at `32n + k`, its length at `34n`.
+// Words (`Tracer::PX_LEN`): the list at `32n + k`, its length at `34n`.
 // The image is bound as atomics here, because the count is one; every
 // other word is read and written through `atomicLoad` / `atomicStore`.
 @group(0) @binding(0) var<uniform> p: Camera;

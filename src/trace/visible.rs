@@ -9,7 +9,7 @@
 //! rasterizes that many in under a millisecond. `Tracer::set_raster` picks
 //! either way (the tests compare the two: pixel for pixel the same).
 
-use super::kernel::Camera;
+use super::camera::Camera;
 use super::shader::Raster;
 use super::Tracer;
 use crate::gpu::{Gpu, Visibility};

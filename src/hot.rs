@@ -10,7 +10,7 @@
 //! Switch it on by pointing `PHIRAY_SHADERS` at the directory holding the
 //! sources (`crates/phiray/src/trace/wgsl`), then call [`reload`] whenever
 //! you want the files re-read — on a timer, or from a key. A kernel that
-//! lists its [`Kernel::FILES`](crate::Kernel::FILES) is then assembled from
+//! lists its [`Kernel::FILE_LIST`](crate::Kernel::FILE_LIST) is then assembled from
 //! disk instead of from the baked text.
 //!
 //! # What it costs when it is off
@@ -23,7 +23,7 @@
 //! # From the Apple tree
 //!
 //! The shape is `appkit/gpu/material/hot_reload/manager.rs`, with the three
-//! ideas worth having from it (`docs/PORTS.md` §3.5):
+//! ideas worth having from it (`docs/PORT_LEDGER.md` §3.5):
 //!
 //! 1. **Compare file CONTENTS, not mtime** — a save that changed nothing,
 //!    or a `touch`, must not recompile.
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn a_kernel_that_lists_no_files_never_reads_from_disk() {
-        // Opting in is per kernel: an empty `FILES` is the baked path, even
+        // Opting in is per kernel: an empty `FILE_LIST` is the baked path, even
         // with hot reload live.
         assert!(assemble(&[]).is_none());
     }

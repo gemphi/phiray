@@ -20,8 +20,8 @@ pub struct Epa {
     pub a: V3,
 }
 
-const MAX_VERTS: usize = 64;
-const MAX_FACES: usize = 192;
+const MAX_VERT: usize = 64;
+const MAX_FACE: usize = 192;
 
 #[derive(Clone, Copy)]
 struct Face {
@@ -104,7 +104,7 @@ pub fn epa(a: &Convex, b: &Convex, mut s: Simplex) -> Option<Epa> {
         let f = faces[nearest(&faces)];
         let v = minkowski(a, b, f.n);
         let reach = dot(v.p, f.n);
-        if reach - f.d < 1e-5 * f.d.max(1.0) || verts.len() >= MAX_VERTS || faces.len() >= MAX_FACES {
+        if reach - f.d < 1e-5 * f.d.max(1.0) || verts.len() >= MAX_VERT || faces.len() >= MAX_FACE {
             return Some(Epa { normal: f.n, depth: f.d, a: witness(&verts, &f) });
         }
         let vi = verts.len();

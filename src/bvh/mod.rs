@@ -8,7 +8,7 @@
 mod build;
 mod sah;
 mod gpu;
-mod kernels;
+mod kernel;
 mod node;
 mod radix;
 mod shape;
@@ -17,8 +17,8 @@ mod spread;
 
 pub use build::{Bvh, Link};
 pub use gpu::GpuBvh;
-pub use kernels::{Karras, Morton, Refit};
-pub use radix::{BINS, Clear, Count, DIGIT, Offset, PASSES, RadixParams, Scatter, Seed};
+pub use kernel::{Karras, Morton, Refit};
+pub use radix::{BIN_COUNT, Clear, Count, DIGIT, Offset, PASS_COUNT, RadixParam, Scatter, Seed};
 pub use sort::GpuSort;
 pub use spread::Spread;
 pub use node::{Aabb, Half, Node, STACK, morton};
@@ -43,4 +43,4 @@ pub fn delta(codes: &[u32], i: i64, j: i64) -> i32 {
 }
 
 #[cfg(test)]
-mod tests;
+mod test;

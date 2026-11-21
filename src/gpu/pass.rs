@@ -61,7 +61,7 @@ impl Pass {
 
     /// Record a launch over `n` items. `params` must start with `[n, groups_x]`;
     /// those two fields are filled in here. Returns the step index.
-    pub fn add<K: Kernel>(&mut self, gpu: &Gpu, n: u32, params: K::Params, buffers: &[&wgpu::Buffer]) -> usize {
+    pub fn add<K: Kernel>(&mut self, gpu: &Gpu, n: u32, params: K::Param, buffers: &[&wgpu::Buffer]) -> usize {
         self.add_over::<K>(gpu, n, n, params, buffers)
     }
 
@@ -72,10 +72,10 @@ impl Pass {
         gpu: &Gpu,
         n: u32,
         items: u32,
-        mut params: K::Params,
+        mut params: K::Param,
         buffers: &[&wgpu::Buffer],
     ) -> usize {
-        assert_eq!(buffers.len(), K::BINDS.len(), "{}: binding count", K::NAME);
+        assert_eq!(buffers.len(), K::BIND_LIST.len(), "{}: binding count", K::NAME);
         let dispatch = Dispatch::new(items);
         let head: &mut [u32] = bytemuck::cast_slice_mut(bytemuck::bytes_of_mut(&mut params));
         head[0] = n;
@@ -108,15 +108,18 @@ impl Pass {
     /// Replay every step in one command buffer.
     pub fn run(&self, gpu: &Gpu) {
         let mut enc = gpu.device.create_command_encoder(&Default::default());
-        {
-            let mut cp = enc.begin_compute_pass(&Default::default());
-            for s in &self.steps {
-                cp.set_pipeline(&s.pipeline);
-                cp.set_bind_group(0, &s.group, &[]);
-                cp.dispatch_workgroups(s.dispatch.x, s.dispatch.y, 1);
-            }
-        }
+        self.record(&mut enc, 0..self.steps.len(), None);
         gpu.queue.submit([enc.finish()]);
+    }
+    /// Record `steps` into `enc` as one compute pass, stamped by `writes`
+    /// when given (`Clock::run`).
+    pub(super) fn record(&self, enc: &mut wgpu::CommandEncoder, steps: std::ops::Range<usize>, writes: Option<wgpu::ComputePassTimestampWrites>) {
+        let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: writes });
+        for s in &self.steps[steps] {
+            cp.set_pipeline(&s.pipeline);
+            cp.set_bind_group(0, &s.group, &[]);
+            cp.dispatch_workgroups(s.dispatch.x, s.dispatch.y, 1);
+        }
     }
 
     /// Replay one step in its own command buffer.

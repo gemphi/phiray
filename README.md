@@ -12,11 +12,10 @@ Phiber's own renderer, next to Cycles. Entry point: `phiray::Ray`.
 src/
 ├── lib.rs     Ray, re-exports
 ├── mode.rs    Mode ↔ Blender shading names
-├── kernel.rs  Kernel trait, Bind, Dispatch (256 blocks, x→y spill), WGSL prelude
+├── kernel/    Kernel trait, Bind, Dispatch (256 blocks, x→y spill), WGSL prelude; Skin (linear blend skinning, CSR influences), Denoise, image kernels + CPU twins
 ├── bvh/       Aabb, Half/Node (16-byte halves, leaf bit), Bvh (CPU LBVH), GpuBvh + Morton/Karras/Refit kernels
-├── gpu/       Gpu (device+queue), GpuArray<T>, Pass (cache + record + replay)
+├── gpu/       Gpu (device+queue), GpuArray<T>, Pass (cache + record + replay), Clock (GPU time a sample)
 ├── trace/     Tracer, Camera, Scene (compact faces/vertices/materials), Tri + wgsl/ (Rendered mode)
-├── kernels/   Skin (linear blend skinning, CSR influences) + CPU twin
 └── sim/       Rigid bodies: XPBD substeps, broadphase over `bvh`, narrowphase (closed forms, SAT, GJK/EPA), Blender's Rigid Body World in (`docs/ROADMAP.md` §2)
 tests/         gpu.rs (skinning), bvh.rs (build + refit), trace.rs (image), sim.rs (bodies vs closed forms) — GPU == CPU; skip without an adapter
 reference/
@@ -27,7 +26,7 @@ The GPU design follows `reference/warp/ANALYSIS.md`. The old app shell and docs 
 `crates/apple/apps/phiray` (BGE-replacement UI); this crate is the renderer core.
 Status: `jobs.md`.
 
-Writing a kernel: implement `Kernel` (`NAME`, `WGSL`, `BINDS`, `Params` starting with
+Writing a kernel: implement `Kernel` (`NAME`, `WGSL`, `BIND_LIST`, `Param` starting with
 `n, groups_x`), use `item(gid, p.groups_x)` for the index, add a CPU twin, then
 `pass.add::<K>(&gpu, n, params, &[buffers])` once and `pass.run(&gpu)` every frame.
 

@@ -7,7 +7,7 @@
 //! - its **irradiance** as nine spherical-harmonic coefficients (Ramamoorthi
 //!   & Hanrahan 2001): the diffuse light a surface facing `n` receives, over
 //!   π, so `albedo · Σ cᵢ Yᵢ(n)` is its diffuse radiance;
-//! - its **prefiltered** copies, one per roughness step (`LEVELS − 1` of
+//! - its **prefiltered** copies, one per roughness step (`LEVEL_COUNT − 1` of
 //!   them; the image itself stands for roughness 0): the GGX lobe of that
 //!   roughness convolved over the sphere (Karis 2013, `N = V = R`), sampled
 //!   with filtered importance sampling (Křivánek 2008: each sample reads the
@@ -24,7 +24,7 @@ use rayon::prelude::*;
 pub struct EnvLighting {
     /// The 27 irradiance coefficients (`add_bits`, 27 × 1).
     pub irradiance: u32,
-    /// The first prefiltered copy (roughness `1 / (LEVELS − 1)`); the rest
+    /// The first prefiltered copy (roughness `1 / (LEVEL_COUNT − 1)`); the rest
     /// follow it, one id each.
     pub prefiltered: u32,
     /// Roughness steps, the image itself included.
@@ -32,12 +32,12 @@ pub struct EnvLighting {
 }
 
 /// Roughness steps: 0 (the image), 0.2, 0.4, 0.6, 0.8, 1.
-pub const LEVELS: u32 = 6;
+pub const LEVEL_COUNT: u32 = 6;
 /// A prefiltered copy's size: a blurred sphere needs no more.
 pub const PREFILTER_W: u32 = 128;
 pub const PREFILTER_H: u32 = 64;
 /// GGX samples per prefiltered texel.
-const SAMPLES: u32 = 64;
+const SAMPLE_COUNT: u32 = 64;
 
 /// The precomputation.
 pub struct Ibl;
@@ -125,8 +125,8 @@ impl Ibl {
                     let (t, b) = Self::frame(n);
                     let mut sum = [0.0f32; 3];
                     let mut weight = 0.0f32;
-                    for i in 0..SAMPLES {
-                        let (u1, u2) = Self::hammersley(i, SAMPLES);
+                    for i in 0..SAMPLE_COUNT {
+                        let (u1, u2) = Self::hammersley(i, SAMPLE_COUNT);
                         // A GGX half vector (Walter 2007), about `n`.
                         let cos_h = ((1.0 - u1) / (1.0 + (alpha * alpha - 1.0) * u1)).sqrt();
                         let sin_h = (1.0 - cos_h * cos_h).max(0.0).sqrt();
@@ -143,7 +143,7 @@ impl Ibl {
                         // covers one sample's share of it.
                         let d = alpha * alpha / (std::f32::consts::PI * (nh * nh * (alpha * alpha - 1.0) + 1.0).powi(2));
                         let pdf = (d * 0.25).max(1e-6);
-                        let sample_sa = 1.0 / (SAMPLES as f32 * pdf);
+                        let sample_sa = 1.0 / (SAMPLE_COUNT as f32 * pdf);
                         let level = (0.5 * (sample_sa / texel_sa).log2() + 1.0).clamp(0.0, (chain.len() - 1) as f32);
                         let (lu, lv) = Panorama::uv(l);
                         let c = Self::sample_level(chain, level, lu, lv);

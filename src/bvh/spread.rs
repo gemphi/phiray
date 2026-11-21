@@ -8,17 +8,17 @@
 //! quarters of the hop the GPU sort was written to remove.
 
 use crate::kernel::{Bind, Kernel};
-use super::radix::RadixParams;
+use super::radix::RadixParam;
 
 pub struct Spread;
 
 impl Kernel for Spread {
     const NAME: &'static str = "radix.spread";
-    const BINDS: &'static [Bind] = &[Bind::Read, Bind::Write];
-    type Params = RadixParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Read, Bind::Write];
+    type Param = RadixParam;
     const WGSL: &'static str = r#"
-struct Params { n: u32, groups_x: u32, shift: u32, _a: u32 }
-@group(0) @binding(0) var<uniform> p: Params;
+struct Param { n: u32, groups_x: u32, shift: u32, _a: u32 }
+@group(0) @binding(0) var<uniform> p: Param;
 @group(0) @binding(1) var<storage, read> key: array<vec2<u32>>;
 @group(0) @binding(2) var<storage, read_write> codes: array<u32>;
 

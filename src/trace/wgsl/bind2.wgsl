@@ -1,5 +1,5 @@
 // Compact scene (`scene.rs`), each large array split over 2 bindings (4 in
-// `binds4.wgsl`) of `p.split` items so one binding never exceeds the device limit:
+// `bind4.wgsl`) of `p.split` items so one binding never exceeds the device limit:
 // nodes, faces (BVH leaf order), vertices; `data = [table…, atlas…]` with
 // `table = [lamp count L, lamp faces × L, lamp cdf × L, materials × 14 words]`
 // and the atlas from `p.split.w`; `px = [packed pixel × n, accum rgb × n]`.

@@ -7,7 +7,7 @@
 // refining image the path tracer makes of the same scene.
 
 // Surfaces one ray looks through: alpha blending and glass.
-const PREVIEW_LAYERS: u32 = 6u;
+const PREVIEW_LAYER_COUNT: u32 = 6u;
 
 // The world footprint of one pixel at distance `t` along a camera ray.
 fn footprint(t: f32) -> f32 {
@@ -249,7 +249,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var col = vec3<f32>(0.0);
     var thr = vec3<f32>(1.0);
     var cover = 1.0;
-    for (var layer = 0u; layer < PREVIEW_LAYERS; layer++) {
+    for (var layer = 0u; layer < PREVIEW_LAYER_COUNT; layer++) {
         let h = trace(o, d, INF, false);
         if (h.tri == 0xffffffffu) {
             if (layer == 0u) {

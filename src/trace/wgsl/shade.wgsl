@@ -208,6 +208,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (dot(n, -d) < 0.0) { n = ng; }
         proc_n = n;
         let off = ng * hit_lift(h.t);
+        // For a ray that goes on through this surface (`through_lift`).
+        let past = ng * through_lift(hit, h.t);
         let pos = hit + off;
         var base = proc_base(m, max(t.color.rgb, vec3<f32>(0.0)), pobj, uv, inst);
         var alpha = t.color.a;
@@ -227,7 +229,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (rnd(&seed) >= alpha) {
             n_see++;
             if (n_see > see_through) { break; }
-            o = hit - off;
+            o = hit - past;
             continue;
         }
         col += thr * emit;
@@ -235,13 +237,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let fd = dielectric_f0(t.ior);
         var diffuse = base * (1.0 - metal);
         if (max(diffuse.r, max(diffuse.g, diffuse.b)) > 0.0) {
-            diffuse *= under_layer(fd, max(rough, 0.04), max(dot(n, -d), 1e-4));
+            diffuse *= under_layer_real(t.ior, max(rough, 0.04), max(dot(n, -d), 1e-4));
         }
         let s = Surf(
             pos, n, -d, diffuse, mix(fd, base, metal), max(rough, 0.04),
             bleed, scatter_tint(t.sss_radius),
             t.sheen, t.sheen_rough, t.sheen_tint,
             t.coat, t.coat_rough,
+            t.ior, 1.0 - metal,
         );
         let opaque = 1.0 - t.trans * (1.0 - metal);
         // Light Paths ▸ Clamping (`p.limit`): the camera hit's direct light
@@ -252,8 +255,25 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // leaving fireflies that Adaptive Sampling then never settles.
         var c = vec3<f32>(0.0);
         if (opaque > 0.0) {
-            c = clamp_light(direct(s, &seed, true, true) * opaque, p.limit.x);
+            c = direct(s, &seed, true, true) * opaque;
         }
+        // Glass still reflects. Its share lost every light with the opaque
+        // one, so a pane showed no lamp's highlight and only the part of the
+        // sky's reflection the glossy ray's MIS weight left it. Cycles lights
+        // the reflection of a glass closure as it does any dielectric's
+        // (`bsdf_microfacet_eval` for `CLOSURE_BSDF_MICROFACET_GGX_GLASS_ID`);
+        // what glass does not have is the diffuse and the sheen under it.
+        if (opaque < 1.0) {
+            let shine = Surf(
+                pos, n, -d, vec3<f32>(0.0), s.f0, s.rough,
+                0.0, vec3<f32>(1.0),
+                0.0, t.sheen_rough, t.sheen_tint,
+                t.coat, t.coat_rough,
+                s.eta, s.dielectric,
+            );
+            c += direct(shine, &seed, true, true) * (1.0 - opaque);
+        }
+        c = clamp_light(c, p.limit.x);
         var bounced = vec3<f32>(0.0);
 
         // Do not launch a diffuse path for a lobe whose contribution is
@@ -299,10 +319,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let refl = reflect(d, hw);
         let cos_hi = max(dot(hw, v), 0.0);
         let cos_no = dot(n, refl);
-        let f0 = s.f0;
         // Fresnel at the microfacet, not the macro normal. The glass path
         // below reuses it for the energy the reflection took.
-        let fres = f0 + (1.0 - f0) * pow(1.0 - cos_hi, 5.0);
+        let fres = fresnel_of(s, cos_hi);
         if (!take_diffuse && glossy_on && dot(refl, ng) > 0.0 && cos_hi > 0.0 && cos_no > 0.0) {
             let rh = trace(pos, refl, INF, false);
             var rc = env_at(refl);
@@ -335,10 +354,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             // took `1 − fres` as if some had left, which darkened every
             // glass edge seen from inside.
             nd = reflect(d, n);
-            o = pos;
+            o = hit + past;
             thr *= tw;
         } else {
-            o = hit - off;
+            o = hit - past;
             // Each crossing tints by the square root of the base colour
             // (`generalized_schlick_setup`'s `sqrt(clamped_base_color)`),
             // so in and out again comes to the base colour once. Tinting

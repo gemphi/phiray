@@ -19,7 +19,7 @@
 // are faded to `1 − xray_alpha` (`overlay_xray_fade`), as the floor grid is.
 
 // The most surfaces X-ray sees through along one ray.
-const WIRE_LAYERS: u32 = 32u;
+const WIRE_LAYER_COUNT: u32 = 32u;
 
 // How much of this pixel the wire of the surface `h` covers, at `t` along
 // the ray.
@@ -74,7 +74,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         var ahead = 0.0;
         var last = 0xffffffffu;
         var last_inst = 0u;
-        for (var k = 0u; k < WIRE_LAYERS; k++) {
+        for (var k = 0u; k < WIRE_LAYER_COUNT; k++) {
             let h = trace(o + d * ahead, d, INF, false);
             if (h.tri == 0xffffffffu) { break; }
             let t = ahead + h.t;

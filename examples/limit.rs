@@ -3,7 +3,7 @@
 
 fn main() {
     println!("adapters, best first:");
-    for a in phiray::GpuAdapter::distinct(phiray::GpuAdapters::all()) {
+    for a in phiray::GpuAdapter::distinct(phiray::GpuAdapterList::all()) {
         println!("  {} ({}, {}) — {} MB per binding", a.name, a.kind_label(), a.backend_label(), a.binding >> 20);
     }
     let Some(gpu) = phiray::Gpu::new() else {

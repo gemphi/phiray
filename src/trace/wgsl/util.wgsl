@@ -67,7 +67,7 @@ fn view_transform(lin: vec3<f32>) -> vec3<f32> {
 // Carlo global illumination", applied per pixel as Cycles applies it —
 // not in hierarchical tiles.
 //
-// Words (see `Tracer::PX_WORDS`): the half image's rgb at `26n + 3i`, and
+// Words (see `Tracer::PX_LEN`): the half image's rgb at `26n + 3i`, and
 // the converged flag at `29n + i`.
 fn adapt_on() -> bool { return p.adapt.w != 0.0; }
 fn adapt_aux(i: u32) -> u32 { return 26u * p.n + 3u * i; }

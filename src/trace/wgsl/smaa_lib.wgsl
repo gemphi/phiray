@@ -16,7 +16,7 @@
 @group(0) @binding(2) var<storage, read> tables: array<u32>;
 
 const SMAA_THRESHOLD: f32 = 0.1;
-const SMAA_MAX_SEARCH_STEPS: f32 = 16.0;
+const SMAA_MAX_SEARCH_STEP: f32 = 16.0;
 const SMAA_MAX_SEARCH_STEPS_DIAG: f32 = 8.0;
 const SMAA_CORNER_ROUNDING_NORM: f32 = 0.25;
 const SMAA_LOCAL_CONTRAST_ADAPTATION_FACTOR: f32 = 2.0;
@@ -26,7 +26,7 @@ const SMAA_AREATEX_PIXEL_SIZE: vec2<f32> = vec2<f32>(1.0 / 160.0, 1.0 / 560.0);
 const SMAA_AREATEX_SUBTEX_SIZE: f32 = 1.0 / 7.0;
 const SMAA_SEARCHTEX_SIZE: vec2<f32> = vec2<f32>(66.0, 33.0);
 const SMAA_SEARCHTEX_PACKED_SIZE: vec2<f32> = vec2<f32>(64.0, 16.0);
-const AREA_BYTES: u32 = 160u * 560u * 2u;
+const AREA_LEN: u32 = 160u * 560u * 2u;
 
 // `SMAA_RT_METRICS`: a texel's size and the image's.
 fn rt() -> vec4<f32> {
@@ -119,7 +119,7 @@ fn area_at(uv: vec2<f32>) -> vec2<f32> {
 }
 
 fn search_texel(x: i32, y: i32) -> f32 {
-    return table_byte(AREA_BYTES + u32(clamp(y, 0, 15)) * 64u + u32(clamp(x, 0, 63)));
+    return table_byte(AREA_LEN + u32(clamp(y, 0, 15)) * 64u + u32(clamp(x, 0, 63)));
 }
 
 // The search table, filtered.

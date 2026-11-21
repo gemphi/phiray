@@ -12,7 +12,7 @@
 //! Radiance is filtered *divided by albedo*, so texture detail is put back
 //! after filtering rather than blurred away with the noise.
 //!
-//! Buffer layout (`Tracer::PX_WORDS`): 0..n packed display, n..4n linear sums,
+//! Buffer layout (`Tracer::PX_LEN`): 0..n packed display, n..4n linear sums,
 //! 4n..7n display sums, 7n..10n albedo, 10n..13n normal, 13n..14n depth,
 //! 14n..17n and 17n..20n the two scratch images this ping-pongs between,
 //! 20n..24n the grid overlay and its coverage, 24n..25n the film coverage
@@ -23,7 +23,7 @@ use bytemuck::{Pod, Zeroable};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct DenoiseParams {
+pub struct DenoiseParam {
     pub n: u32,
     pub groups_x: u32,
     pub w: u32,
@@ -54,10 +54,10 @@ pub struct Denoise;
 
 impl Kernel for Denoise {
     const NAME: &'static str = "denoise";
-    const BINDS: &'static [Bind] = &[Bind::Write];
-    type Params = DenoiseParams;
+    const BIND_LIST: &'static [Bind] = &[Bind::Write];
+    type Param = DenoiseParam;
     const WGSL: &'static str = concat!(
-        include_str!("denoise_params.wgsl"),
+        include_str!("denoise_param.wgsl"),
         include_str!("../trace/wgsl/view.wgsl"),
         include_str!("denoise.wgsl"),
     );

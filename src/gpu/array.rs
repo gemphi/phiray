@@ -142,7 +142,7 @@ impl<T: Pod> GpuArray<T> {
     }
 
     /// Copy back `count` items from `from`. The image buffer holds its
-    /// planes end to end — `Tracer::PX_WORDS` of them — so a caller that
+    /// planes end to end — `Tracer::PX_LEN` of them — so a caller that
     /// wants one plane, or one word, near the end must not be made to read
     /// the quarter-gigabyte in front of it (`Tracer::unconverged`).
     pub fn read_range(&self, gpu: &Gpu, from: usize, count: usize) -> Vec<T> {

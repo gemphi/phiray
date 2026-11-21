@@ -132,7 +132,7 @@ fn switching_modes_rebuilds_the_pass() {
     tr.set_mode(Mode::Solid);
     let solid = settled(&mut tr, &gpu, camera(), W, H);
     tr.set_mode(Mode::Rendered);
-    assert_eq!(tr.samples(), Tracer::SAMPLES);
+    assert_eq!(tr.samples(), Tracer::SAMPLE_COUNT);
     let (traced, done) = tr.render(&gpu, camera(), W, H);
     assert!(!done, "the tracer refines, so its first frame is not the last");
     assert_ne!(solid, traced, "the two modes must not produce the same image");
@@ -354,7 +354,7 @@ fn tiles_laid_together_are_the_whole_frame() {
         let worst = tiled.iter().zip(&full).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
         assert_eq!(tiled, full, "{mode:?}: the tiles differ from the frame drawn whole ({off} of {} bytes, worst {worst})", full.len());
         // And the prepass draws that same frame to within a step, over the
-        // instanced draws one mesh at a time (`Trees::draws`).
+        // instanced draws one mesh at a time (`Forest::draws`).
         let mut drawn = Tracer::new(&gpu, &wall(), &Atlas::default()).expect("scene");
         drawn.set_mode(mode);
         let shown = settled(&mut drawn, &gpu, cam, W, H);

@@ -108,7 +108,7 @@ impl Visibility {
 
     /// Draw each of `draws` — `[first vertex, vertex count, first
     /// instance slot, instance count]`, one instanced draw a mesh
-    /// (`Trees::draws`) — with `params` and copy the hits out. A pixel
+    /// (`Forest::draws`) — with `params` and copy the hits out. A pixel
     /// nothing covers reads face `u32::MAX`.
     pub fn draw<P: bytemuck::Pod>(&self, gpu: &Gpu, params: &P, draws: &[[u32; 4]]) {
         gpu.queue.write_buffer(&self.params, 0, bytemuck::bytes_of(params));

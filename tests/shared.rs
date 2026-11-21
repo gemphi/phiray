@@ -4,7 +4,7 @@
 //! opens a new one and says so (`Gpu::generation`). Its own test binary:
 //! the shared device is process-wide.
 
-use phiray::{Atlas, Camera, Gpu, GpuAdapter, GpuAdapters, Mode, Tracer, Tri};
+use phiray::{Atlas, Camera, Gpu, GpuAdapter, GpuAdapterList, Mode, Tracer, Tri};
 
 #[test]
 fn the_process_shares_one_device_until_another_is_picked() {
@@ -13,7 +13,7 @@ fn the_process_shares_one_device_until_another_is_picked() {
         return;
     };
     assert_eq!(Gpu::in_use(), Some(first.adapter.clone()));
-    assert_eq!(GpuAdapter::pick(GpuAdapters::all(), None), Some(&first.adapter), "Auto: the best ranked");
+    assert_eq!(GpuAdapter::pick(GpuAdapterList::all(), None), Some(&first.adapter), "Auto: the best ranked");
     // A kernel compiled through one handle is compiled for every holder.
     let n = [0.0, -1.0, 0.0];
     let tris = [Tri::new([[-1.0, 0.0, -1.0], [1.0, 0.0, -1.0], [1.0, 0.0, 1.0]], [n; 3], [0.6, 0.6, 0.6, 1.0])];
@@ -27,5 +27,5 @@ fn the_process_shares_one_device_until_another_is_picked() {
     let picked = Gpu::switch(Some(first.adapter.name.clone()));
     assert_eq!((Gpu::generation(), picked), (before + 1, Some(first.adapter.clone())), "a new device on the card named");
     assert_eq!(Gpu::shared().expect("the new device").compiled(), 0, "which compiles its kernels afresh");
-    GpuAdapters::prefer(None);
+    GpuAdapterList::prefer(None);
 }

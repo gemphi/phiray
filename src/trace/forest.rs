@@ -1,14 +1,14 @@
 //! The scene's trees: one over each mesh's faces in its own space
 //! (`blas`), and one over the instances' world bounds (`tlas`), laid out
 //! for the kernel as a single node array — the top tree first, so the root
-//! is node 0, then each mesh's tree shifted to its place (`Trees::nodes`).
+//! is node 0, then each mesh's tree shifted to its place (`Forest::nodes`).
 //! A top-tree leaf names instance slots and carries the `INST` bit
 //! (`bvh.wgsl`); an instance's record says where its mesh's tree starts
 //! (`Instance::words`). A mesh shown by many instances has one tree, as
 //! Cycles builds one BVH per `Geometry` and an instance BVH over the
 //! `Object`s (`scene/object.cpp`; roadmap §4.4, Step 1).
 
-use super::instance::{INSTANCE_WORDS, Instance};
+use super::instance::{INSTANCE_LEN, Instance};
 use super::mesh::Mesh;
 use super::scene::Scene;
 use crate::bvh::{Aabb, Bvh, Node};
@@ -19,7 +19,7 @@ pub const INST: u32 = 1 << 30;
 /// Faces per leaf of a mesh's tree.
 const LEAF: u32 = 4;
 
-pub struct Trees {
+pub struct Forest {
     /// One per mesh; empty for a mesh with no faces.
     pub blas: Vec<Bvh>,
     pub tlas: Bvh,
@@ -36,7 +36,7 @@ pub struct Trees {
     n_insts: usize,
 }
 
-impl Trees {
+impl Forest {
     /// Build every mesh's tree over `scene`'s faces (in its own space) and
     /// the top tree over the instances' placed bounds. Returns the trees
     /// and the face order the scene takes (`Scene::reorder`): each mesh's
@@ -177,9 +177,9 @@ impl Trees {
             })
             .collect();
         words.extend(&self.inst_order);
-        words.resize(insts.len() * (INSTANCE_WORDS + 1), 0);
+        words.resize(insts.len() * (INSTANCE_LEN + 1), 0);
         words.extend(&self.draw_order);
-        words.resize(insts.len() * (INSTANCE_WORDS + 2), 0);
+        words.resize(insts.len() * (INSTANCE_LEN + 2), 0);
         words
     }
 
@@ -221,4 +221,4 @@ impl Trees {
 }
 
 #[cfg(test)]
-mod tests;
+mod test;

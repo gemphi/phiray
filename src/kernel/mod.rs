@@ -1,9 +1,17 @@
-//! Compute kernel model (Warp `block_dim` + lean index, mapped to WGSL).
+//! Compute kernel model (Warp `block_dim` + lean index, mapped to WGSL),
+//! and the built-in kernels: each has a WGSL body and a CPU twin used for
+//! tests and fallback.
+mod denoise;
+mod image;
+mod skin;
+pub use denoise::{Denoise, DenoiseParam};
+pub use image::{Bilateral, BilateralParam, Convolve, ConvolveParam, ImageBilateralFilter, ImageConvolution, MatMul, MatMulParam, MatrixMultiplication};
+pub use skin::{Pair, Skin, SkinParam};
 
 /// Invocations per workgroup; matches WGSL `@workgroup_size(256)`.
 pub const BLOCK: u32 = 256;
 /// Max workgroups per axis (WebGPU default limit).
-pub const MAX_GROUPS: u32 = 65_535;
+pub const MAX_GROUP: u32 = 65_535;
 
 /// How a kernel sees one binding (group 0, in order; binding 0 is always the params uniform).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,15 +46,15 @@ const fn fnv1a(s: &str, mut h: u64) -> u64 {
 
 /// A GPU kernel: WGSL body plus its bindings. `Dispatch::PRELUDE` is prepended.
 ///
-/// The body declares `@group(0) @binding(0) var<uniform> p: Params;` whose first
+/// The body declares `@group(0) @binding(0) var<uniform> p: Param;` whose first
 /// two fields are `n: u32, groups_x: u32`, then its storage bindings.
 pub trait Kernel {
     const NAME: &'static str;
     const WGSL: &'static str;
     /// Storage bindings after the params uniform.
-    const BINDS: &'static [Bind];
-    /// Params block (must start with `n: u32, groups_x: u32`).
-    type Params: bytemuck::Pod;
+    const BIND_LIST: &'static [Bind];
+    /// Param block (must start with `n: u32, groups_x: u32`).
+    type Param: bytemuck::Pod;
 
     /// The compute entry point. `main` unless one source carries two
     /// kernels (`Adapt` and `AdaptDilate` share `adapt.wgsl`).
@@ -57,12 +65,12 @@ pub trait Kernel {
     /// the baked text", which is every kernel until it opts in: a kernel's
     /// source is a concatenation of many files and only the macro that
     /// built it knows which, so the list has to be written beside it.
-    const FILES: &'static [&'static str] = &[];
+    const FILE_LIST: &'static [&'static str] = &[];
 
     /// Full shader source: the files from disk when hot reload is live and
     /// has all of them, else the text baked in at compile time.
     fn source() -> String {
-        match crate::hot::assemble(Self::FILES) {
+        match crate::hot::assemble(Self::FILE_LIST) {
             Some(disk) => format!("{}{}", Dispatch::PRELUDE, disk),
             None => format!("{}{}", Dispatch::PRELUDE, Self::WGSL),
         }
@@ -107,7 +115,7 @@ pub struct Dispatch {
 impl Dispatch {
     pub fn new(n: u32) -> Self {
         let blocks = n.div_ceil(BLOCK).max(1);
-        let x = blocks.min(MAX_GROUPS);
+        let x = blocks.min(MAX_GROUP);
         Self { n, x, y: blocks.div_ceil(x) }
     }
 
@@ -132,7 +140,7 @@ mod tests {
     fn covers_every_item_once() {
         for n in [0, 1, 255, 256, 257, 16_777_216, 20_000_000] {
             let d = Dispatch::new(n);
-            assert!(d.x <= MAX_GROUPS && d.y <= MAX_GROUPS);
+            assert!(d.x <= MAX_GROUP && d.y <= MAX_GROUP);
             assert!(d.x as u64 * d.y as u64 * BLOCK as u64 >= n as u64);
             let last = [(d.x * BLOCK) - 1, d.y - 1];
             assert!(n == 0 || d.index(last).is_none() || n as u64 == d.x as u64 * d.y as u64 * BLOCK as u64);
@@ -145,8 +153,8 @@ mod tests {
     impl Kernel for Fill {
         const NAME: &'static str = "fill";
         const WGSL: &'static str = "@compute @workgroup_size(256) fn main() {}";
-        const BINDS: &'static [Bind] = &[];
-        type Params = [u32; 2];
+        const BIND_LIST: &'static [Bind] = &[];
+        type Param = [u32; 2];
     }
 
     #[test]
